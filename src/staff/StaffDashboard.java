@@ -1,0 +1,308 @@
+package staff;
+
+import model.Order;
+import ui.UITheme;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
+
+public class StaffDashboard extends JFrame implements StaffConnection.MessageListener {
+
+    private DefaultTableModel orderModel;
+    private JTable orderTable;
+    private JLabel statusLabel;
+    private JLabel countLabel;
+    private JLabel connLabel;
+
+    private StaffConnection connection;
+    private final List<Order> orders = new ArrayList<>();
+
+    public StaffDashboard() {
+        setTitle("Smart Canteen - Staff");
+        setSize(950, 600);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        getContentPane().setBackground(UITheme.BG);
+        setLayout(new BorderLayout());
+
+        add(buildHeader(), BorderLayout.NORTH);
+        add(buildCenter(), BorderLayout.CENTER);
+        add(buildFooter(), BorderLayout.SOUTH);
+
+        setVisible(true);
+
+        // Connect AFTER the UI is visible so messages can update the table
+        connectToServer();
+        refreshOrders(); // initial load
+    }
+
+    // ---------- UI ----------
+    private JPanel buildHeader() {
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(UITheme.PRIMARY_DARK);
+        header.setBorder(new EmptyBorder(15, 20, 15, 20));
+
+        JLabel title = new JLabel("👨‍🍳  Kitchen Dashboard");
+        title.setFont(UITheme.H1);
+        title.setForeground(Color.WHITE);
+
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 15, 0));
+        right.setOpaque(false);
+
+        connLabel = new JLabel("● connecting...");
+        connLabel.setFont(UITheme.BODY_B);
+        connLabel.setForeground(Color.YELLOW);
+
+        countLabel = new JLabel("0 orders");
+        countLabel.setFont(UITheme.BODY_B);
+        countLabel.setForeground(Color.WHITE);
+
+        right.add(connLabel);
+        right.add(countLabel);
+
+        header.add(title, BorderLayout.WEST);
+        header.add(right, BorderLayout.EAST);
+        return header;
+    }
+
+    private JScrollPane buildCenter() {
+        orderModel = new DefaultTableModel(
+                new String[] { "Order ID", "Student", "Total (Rs.)", "Status" }, 0) {
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        orderTable = new JTable(orderModel);
+        orderTable.setFont(UITheme.BODY);
+        orderTable.setRowHeight(32);
+        orderTable.getTableHeader().setFont(UITheme.BODY_B);
+        orderTable.getTableHeader().setBackground(UITheme.PRIMARY_DARK);
+        orderTable.getTableHeader().setForeground(Color.WHITE);
+        orderTable.setSelectionBackground(UITheme.PRIMARY);
+        orderTable.setSelectionForeground(Color.WHITE);
+        orderTable.setGridColor(UITheme.BORDER);
+        orderTable.setShowVerticalLines(false);
+
+        DefaultTableCellRenderer rightRenderer = new DefaultTableCellRenderer();
+        rightRenderer.setHorizontalAlignment(SwingConstants.RIGHT);
+        orderTable.getColumnModel().getColumn(2).setCellRenderer(rightRenderer);
+        orderTable.getColumnModel().getColumn(3).setCellRenderer(new StatusRenderer());
+
+        JScrollPane scroll = new JScrollPane(orderTable);
+        scroll.setBorder(new EmptyBorder(10, 10, 10, 10));
+        return scroll;
+    }
+
+    private JPanel buildFooter() {
+        JPanel footer = new JPanel(new BorderLayout());
+        footer.setBackground(UITheme.BG);
+        footer.setBorder(new EmptyBorder(10, 20, 15, 20));
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        buttons.setOpaque(false);
+
+        JButton refreshBtn = styledButton("🔄 Refresh", UITheme.PRIMARY_DARK);
+        JButton readyBtn = styledButton("✅ Mark Ready", UITheme.PRIMARY);
+
+        refreshBtn.addActionListener(e -> refreshOrders());
+        readyBtn.addActionListener(e -> markReady());
+
+        buttons.add(refreshBtn);
+        buttons.add(readyBtn);
+
+        statusLabel = new JLabel("Ready.");
+        statusLabel.setFont(UITheme.SMALL);
+        statusLabel.setForeground(UITheme.TEXT_MUTED);
+
+        footer.add(buttons, BorderLayout.WEST);
+        footer.add(statusLabel, BorderLayout.EAST);
+        return footer;
+    }
+
+    private JButton styledButton(String text, Color bg) {
+        JButton btn = new JButton(text);
+        btn.setFont(UITheme.BODY_B);
+        btn.setForeground(Color.WHITE);
+        btn.setBackground(bg);
+        btn.setFocusPainted(false);
+        btn.setBorder(new EmptyBorder(8, 16, 8, 16));
+        btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        btn.setOpaque(true);
+        return btn;
+    }
+
+    // ---------- SERVER ----------
+    private void connectToServer() {
+        try {
+            connection = new StaffConnection(this);
+            connection.connect();
+            SwingUtilities.invokeLater(() -> {
+                connLabel.setText("● live");
+                connLabel.setForeground(new Color(0x69F0AE));
+            });
+        } catch (Exception ex) {
+            connLabel.setText("● offline");
+            connLabel.setForeground(Color.RED);
+            JOptionPane.showMessageDialog(this,
+                    "Cannot reach server.\n" + ex.getMessage());
+        }
+    }
+
+    /** Called from the socket thread — must marshal to EDT for Swing. */
+    @Override
+    public void onMessage(String message) {
+        SwingUtilities.invokeLater(() -> handleServerMessage(message));
+    }
+
+    private void handleServerMessage(String message) {
+        // Optional: log to terminal for debugging
+        System.out.println("← " + message);
+
+        if (message == null)
+            return;
+
+        if (message.startsWith("NEW_ORDER:")) {
+            // NEW_ORDER:id:name:total
+            String[] p = message.split(":");
+            if (p.length >= 4) {
+                int id = Integer.parseInt(p[1]);
+                String name = p[2];
+                double total = Double.parseDouble(p[3]);
+                orders.add(0, new Order(id, name, "", total, "PENDING"));
+                rebuildTable();
+                statusLabel.setText("⚡ New order #" + id + " from " + name);
+                Toolkit.getDefaultToolkit().beep();
+            }
+        } else if (message.startsWith("ORDER_UPDATED:")) {
+            // ORDER_UPDATED:id:STATUS
+            String[] p = message.split(":");
+            if (p.length >= 3) {
+                int id = Integer.parseInt(p[1]);
+                String status = p[2];
+                for (Order o : orders) {
+                    if (o.getId() == id) {
+                        // Order is immutable, so replace it
+                        int idx = orders.indexOf(o);
+                        orders.set(idx, new Order(o.getId(), o.getStudentName(),
+                                o.getItems(), o.getTotal(), status));
+                        break;
+                    }
+                }
+                rebuildTable();
+                statusLabel.setText("Order #" + id + " → " + status);
+            }
+        } else if (message.startsWith("ORDERS:")) {
+            orders.clear();
+            orders.addAll(parseOrders(message));
+            rebuildTable();
+            statusLabel.setText("Loaded " + orders.size() + " orders.");
+        } else if (message.startsWith("ERROR:")) {
+            statusLabel.setText("Server error: " + message.substring(6));
+        }
+        // Ignore OK:REGISTERED and OK:READY — those are acks
+    }
+
+    private void refreshOrders() {
+        if (connection == null)
+            return;
+        connection.send("GET_ORDERS");
+    }
+
+    private void rebuildTable() {
+        orderModel.setRowCount(0);
+        for (Order o : orders) {
+            orderModel.addRow(new Object[] {
+                    o.getId(),
+                    o.getStudentName(),
+                    String.format("%.2f", o.getTotal()),
+                    o.getStatus()
+            });
+        }
+        countLabel.setText(orders.size() + " orders");
+    }
+
+    private List<Order> parseOrders(String response) {
+        List<Order> list = new ArrayList<>();
+        String body = response.substring(7); // strip "ORDERS:"
+        if (body.isEmpty())
+            return list;
+
+        for (String entry : body.split(";")) {
+            String[] p = entry.split("~");
+            if (p.length == 4) {
+                list.add(new Order(
+                        Integer.parseInt(p[0]),
+                        p[1],
+                        "",
+                        Double.parseDouble(p[2]),
+                        p[3]));
+            }
+        }
+        return list;
+    }
+
+    private void markReady() {
+        int row = orderTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Select an order first.");
+            return;
+        }
+        int orderId = (int) orderModel.getValueAt(row, 0);
+        String status = (String) orderModel.getValueAt(row, 3);
+
+        if ("READY".equals(status)) {
+            JOptionPane.showMessageDialog(this, "Order #" + orderId + " is already READY.");
+            return;
+        }
+        if (connection == null) {
+            JOptionPane.showMessageDialog(this, "Not connected to server.");
+            return;
+        }
+        // Send and let the broadcast update the table
+        connection.send("MARK_READY:" + orderId);
+        statusLabel.setText("Marking #" + orderId + " as READY...");
+    }
+
+    // ---------- Custom status renderer ----------
+    private static class StatusRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(
+                JTable table, Object value, boolean isSelected,
+                boolean hasFocus, int row, int col) {
+
+            JLabel label = (JLabel) super.getTableCellRendererComponent(
+                    table, value, isSelected, hasFocus, row, col);
+            label.setHorizontalAlignment(SwingConstants.CENTER);
+            label.setFont(UITheme.BODY_B);
+            label.setOpaque(true);
+
+            String status = value == null ? "" : value.toString();
+            if (isSelected) {
+                label.setBackground(UITheme.PRIMARY);
+                label.setForeground(Color.WHITE);
+            } else if ("READY".equals(status)) {
+                label.setBackground(UITheme.READY_BG);
+                label.setForeground(UITheme.READY_FG);
+                label.setText("● READY");
+            } else if ("PENDING".equals(status)) {
+                label.setBackground(UITheme.PENDING_BG);
+                label.setForeground(UITheme.PENDING_FG);
+                label.setText("● PENDING");
+            } else {
+                label.setBackground(Color.WHITE);
+                label.setForeground(UITheme.TEXT);
+            }
+            return label;
+        }
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(StaffDashboard::new);
+    }
+}
