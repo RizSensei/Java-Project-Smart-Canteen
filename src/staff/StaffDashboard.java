@@ -72,7 +72,7 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
 
     private JScrollPane buildCenter() {
         orderModel = new DefaultTableModel(
-                new String[] { "Order ID", "Student", "Total (Rs.)", "Status" }, 0) {
+                new String[] { "Order ID", "Student", "Items", "Total (Rs.)", "Status" }, 0) {
             @Override
             public boolean isCellEditable(int r, int c) {
                 return false;
@@ -80,7 +80,7 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
         };
         orderTable = new JTable(orderModel);
         orderTable.setFont(UITheme.BODY);
-        orderTable.setRowHeight(32);
+        orderTable.setRowHeight(80);
         orderTable.getTableHeader().setFont(UITheme.BODY_B);
         orderTable.getTableHeader().setBackground(UITheme.PRIMARY_DARK);
         orderTable.getTableHeader().setForeground(Color.WHITE);
@@ -89,10 +89,19 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
         orderTable.setGridColor(UITheme.BORDER);
         orderTable.setShowVerticalLines(false);
 
+        orderTable.getColumnModel().getColumn(2).setCellRenderer(new ItemsRenderer());
+
         DefaultTableCellRenderer rightRenderer = new DefaultTableCellRenderer();
         rightRenderer.setHorizontalAlignment(SwingConstants.RIGHT);
-        orderTable.getColumnModel().getColumn(2).setCellRenderer(rightRenderer);
-        orderTable.getColumnModel().getColumn(3).setCellRenderer(new StatusRenderer());
+        orderTable.getColumnModel().getColumn(3).setCellRenderer(rightRenderer);
+
+        orderTable.getColumnModel().getColumn(4).setCellRenderer(new StatusRenderer());
+
+        orderTable.getColumnModel().getColumn(0).setPreferredWidth(80); // Order ID
+        orderTable.getColumnModel().getColumn(1).setPreferredWidth(220); // Student
+        orderTable.getColumnModel().getColumn(2).setPreferredWidth(240); // Items
+        orderTable.getColumnModel().getColumn(3).setPreferredWidth(120); // Total
+        orderTable.getColumnModel().getColumn(4).setPreferredWidth(130); // Status
 
         JScrollPane scroll = new JScrollPane(orderTable);
         scroll.setBorder(new EmptyBorder(10, 10, 10, 10));
@@ -168,13 +177,14 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
             return;
 
         if (message.startsWith("NEW_ORDER:")) {
-            // NEW_ORDER:id:name:total
+            // NEW_ORDER:id:name:items:total ← items may contain ':' escaped as ';'
             String[] p = message.split(":");
-            if (p.length >= 4) {
+            if (p.length >= 5) {
                 int id = Integer.parseInt(p[1]);
                 String name = p[2];
-                double total = Double.parseDouble(p[3]);
-                orders.add(0, new Order(id, name, "", total, "PENDING"));
+                String items = p[3].replace(";", ":");
+                double total = Double.parseDouble(p[4]);
+                orders.add(0, new Order(id, name, items, total, "PENDING"));
                 rebuildTable();
                 statusLabel.setText("⚡ New order #" + id + " from " + name);
                 Toolkit.getDefaultToolkit().beep();
@@ -220,6 +230,7 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
             orderModel.addRow(new Object[] {
                     o.getId(),
                     o.getStudentName(),
+                    o.getItems(),
                     String.format("%.2f", o.getTotal()),
                     o.getStatus()
             });
@@ -235,13 +246,13 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
 
         for (String entry : body.split(";")) {
             String[] p = entry.split("~");
-            if (p.length == 4) {
+            if (p.length == 5) {
                 list.add(new Order(
                         Integer.parseInt(p[0]),
                         p[1],
-                        "",
-                        Double.parseDouble(p[2]),
-                        p[3]));
+                        p[2].replace(",", ", "), // restore commas if needed
+                        Double.parseDouble(p[3]),
+                        p[4]));
             }
         }
         return list;
@@ -299,6 +310,51 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
                 label.setForeground(UITheme.TEXT);
             }
             return label;
+        }
+    }
+
+    // ---------- Custom items renderer (HTML multi-line) ----------
+    private static class ItemsRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(
+                JTable table, Object value, boolean isSelected,
+                boolean hasFocus, int row, int col) {
+
+            JLabel label = (JLabel) super.getTableCellRendererComponent(
+                    table, value, isSelected, hasFocus, row, col);
+
+            String raw = value == null ? "" : value.toString();
+            label.setText(formatItemsAsHtml(raw));
+            label.setVerticalAlignment(SwingConstants.TOP);
+            label.setBorder(new EmptyBorder(6, 8, 6, 8));
+            label.setFont(UITheme.SMALL);
+            return label;
+        }
+
+        private static String formatItemsAsHtml(String raw) {
+            if (raw == null || raw.isEmpty()) {
+                return "<html><i style='color:#999'>—</i></html>";
+            }
+
+            StringBuilder html = new StringBuilder(
+                    "<html><table cellspacing='0' cellpadding='1'>");
+
+            String[] parts = raw.split("\\s*,\\s*");
+            for (String part : parts) {
+                String left = part.split("\\s*=\\s*")[0].trim();
+                html.append("<tr>")
+                        .append("<td><b>").append(escape(left)).append("</b></td>")
+                        .append("</tr>");
+            }
+
+            html.append("</table></html>");
+            return html.toString();
+        }
+
+        private static String escape(String s) {
+            return s.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;");
         }
     }
 
