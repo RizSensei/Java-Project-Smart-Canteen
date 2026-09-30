@@ -20,6 +20,8 @@ public class StudentClient extends JFrame {
     private JLabel statusLabel;
     private final String loggedInName;
     private List<MenuItem> menuItems;
+    private DefaultTableModel myOrdersModel;
+    private JTable myOrdersTable;
 
     private java.util.LinkedHashMap<String, Integer> cartQty = new java.util.LinkedHashMap<>();
     private java.util.LinkedHashMap<String, Double> cartPrice = new java.util.LinkedHashMap<>();
@@ -40,6 +42,7 @@ public class StudentClient extends JFrame {
         add(buildFooter(), BorderLayout.SOUTH);
 
         loadMenu();
+        loadMyOrders();
         setVisible(true);
     }
 
@@ -125,10 +128,57 @@ public class StudentClient extends JFrame {
         cartPanel.add(cartScroll, BorderLayout.CENTER);
         cartPanel.add(totalLabel, BorderLayout.SOUTH);
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, menuScroll, cartPanel);
-        split.setDividerLocation(600);
-        split.setBorder(null);
-        return split;
+        JSplitPane topSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, menuScroll, cartPanel);
+        topSplit.setDividerLocation(600);
+        topSplit.setBorder(null);
+
+        JSplitPane mainSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                topSplit, buildMyOrdersPanel());
+        mainSplit.setDividerLocation(360);
+        mainSplit.setBorder(null);
+        mainSplit.setResizeWeight(0.7);
+
+        return mainSplit;
+    }
+
+    private JScrollPane buildMyOrdersPanel() {
+        myOrdersModel = new DefaultTableModel(
+                new String[] { "ID", "Items", "Total (Rs.)", "Status" }, 0) {
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        myOrdersTable = new JTable(myOrdersModel);
+        myOrdersTable.setFont(UITheme.BODY);
+        myOrdersTable.setRowHeight(28);
+        myOrdersTable.getTableHeader().setFont(UITheme.BODY_B);
+        myOrdersTable.getTableHeader().setBackground(UITheme.PRIMARY_DARK);
+        myOrdersTable.getTableHeader().setForeground(Color.WHITE);
+        myOrdersTable.setSelectionBackground(UITheme.PRIMARY);
+        myOrdersTable.setSelectionForeground(Color.WHITE);
+        myOrdersTable.setGridColor(UITheme.BORDER);
+        myOrdersTable.setShowVerticalLines(false);
+
+        // Right-align total
+        DefaultTableCellRenderer right = new DefaultTableCellRenderer();
+        right.setHorizontalAlignment(SwingConstants.RIGHT);
+        myOrdersTable.getColumnModel().getColumn(2).setCellRenderer(right);
+
+        // Color-code status
+        myOrdersTable.getColumnModel().getColumn(3)
+                .setCellRenderer(new StudentStatusRenderer());
+
+        myOrdersTable.getColumnModel().getColumn(0).setPreferredWidth(60);
+        myOrdersTable.getColumnModel().getColumn(1).setPreferredWidth(400);
+        myOrdersTable.getColumnModel().getColumn(2).setPreferredWidth(100);
+        myOrdersTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+
+        JScrollPane scroll = new JScrollPane(myOrdersTable);
+        scroll.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(UITheme.BORDER),
+                "My Orders", 0, 0, UITheme.BODY_B, UITheme.TEXT));
+        return scroll;
     }
 
     // ---------- FOOTER ----------
@@ -314,6 +364,7 @@ public class StudentClient extends JFrame {
                 JOptionPane.showMessageDialog(this,
                         "Order placed! Order ID: " + orderId);
                 clearCart();
+                loadMyOrders();
                 // No nameField to clear anymore
                 statusLabel.setText("Order #" + orderId + " sent to kitchen.");
             } else {
@@ -335,4 +386,65 @@ public class StudentClient extends JFrame {
         new LoginScreen();
         dispose();
     }
+
+    private void loadMyOrders() {
+        if (myOrdersModel == null)
+            return;
+        try {
+            String response = ServerConnection.send("GET_MY_ORDERS:" + loggedInName);
+            myOrdersModel.setRowCount(0);
+
+            if (response != null && response.startsWith("MY_ORDERS:")) {
+                String body = response.substring(10);
+                if (!body.isEmpty()) {
+                    for (String entry : body.split(";")) {
+                        String[] p = entry.split("~");
+                        if (p.length == 5) {
+                            myOrdersModel.addRow(new Object[] {
+                                    Integer.parseInt(p[0]),
+                                    p[2], // items
+                                    String.format("%.2f", Double.parseDouble(p[3])),
+                                    p[4] // status
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            statusLabel.setText("Could not load your orders: " + ex.getMessage());
+        }
+    }
+
+    private static class StudentStatusRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(
+                JTable table, Object value, boolean isSelected,
+                boolean hasFocus, int row, int col) {
+
+            JLabel label = (JLabel) super.getTableCellRendererComponent(
+                    table, value, isSelected, hasFocus, row, col);
+            label.setHorizontalAlignment(SwingConstants.CENTER);
+            label.setFont(UITheme.BODY_B);
+            label.setOpaque(true);
+
+            String status = value == null ? "" : value.toString();
+            if (isSelected) {
+                label.setBackground(UITheme.PRIMARY);
+                label.setForeground(Color.WHITE);
+            } else if ("READY".equals(status)) {
+                label.setBackground(UITheme.READY_BG);
+                label.setForeground(UITheme.READY_FG);
+                label.setText("● READY");
+            } else if ("PENDING".equals(status)) {
+                label.setBackground(UITheme.PENDING_BG);
+                label.setForeground(UITheme.PENDING_FG);
+                label.setText("● PENDING");
+            } else {
+                label.setBackground(Color.WHITE);
+                label.setForeground(UITheme.TEXT);
+            }
+            return label;
+        }
+    }
+
 }

@@ -112,6 +112,12 @@ public class CanteenServer {
                 }
                 return "ERROR:update failed";
 
+            case "GET_MY_ORDERS":
+                if (parts.length < 2)
+                    return "ERROR:missing name";
+                String studentName = parts[1];
+                return "MY_ORDERS:" + serializeOrdersFor(studentName);
+
             case "QUIT":
                 return "BYE";
 
@@ -133,6 +139,19 @@ public class CanteenServer {
     private static String serializeOrders() {
         StringBuilder sb = new StringBuilder();
         for (Order o : OrderDAO.getAllOrders()) {
+            sb.append(o.getId()).append("~")
+                    .append(o.getStudentName()).append("~")
+                    .append(o.getItems().replace("~", "-").replace(";", ","))
+                    .append("~")
+                    .append(o.getTotal()).append("~")
+                    .append(o.getStatus()).append(";");
+        }
+        return sb.toString();
+    }
+
+    private static String serializeOrdersFor(String studentName) {
+        StringBuilder sb = new StringBuilder();
+        for (Order o : OrderDAO.getOrdersForStudent(studentName)) {
             sb.append(o.getId()).append("~")
                     .append(o.getStudentName()).append("~")
                     .append(o.getItems().replace("~", "-").replace(";", ","))
