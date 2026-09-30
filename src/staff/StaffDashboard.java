@@ -185,7 +185,7 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
                 String name = p[2];
                 String items = p[3].replace(";", ":");
                 double total = Double.parseDouble(p[4]);
-                orders.add(0, new Order(id, name, items, total, "PENDING"));
+                orders.add(new Order(id, name, items, total, "PENDING"));
                 rebuildTable();
                 statusLabel.setText("⚡ New order #" + id + " from " + name);
                 Toolkit.getDefaultToolkit().beep();

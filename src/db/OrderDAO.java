@@ -36,7 +36,7 @@ public class OrderDAO {
     public static List<Order> getAllOrders() {
         List<Order> orders = new ArrayList<>();
         String sql = "SELECT id, student_name, items, total, status " +
-                "FROM orders ORDER BY id DESC";
+                "FROM orders ORDER BY id ASC";
 
         try (Connection conn = DBConnection.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql);
@@ -73,7 +73,7 @@ public class OrderDAO {
     public static List<Order> getOrdersForStudent(String studentName) {
         List<Order> orders = new ArrayList<>();
         String sql = "SELECT id, student_name, items, total, status " +
-                "FROM orders WHERE student_name = ? ORDER BY id DESC";
+                "FROM orders WHERE student_name = ? ORDER BY id ASC";
 
         try (Connection conn = DBConnection.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
