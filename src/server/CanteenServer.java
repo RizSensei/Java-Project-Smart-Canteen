@@ -2,6 +2,7 @@ package server;
 
 import db.MenuDAO;
 import db.OrderDAO;
+import db.UserDAO;
 import model.MenuItem;
 import model.Order;
 
@@ -67,6 +68,15 @@ public class CanteenServer {
                 staffClients.add(out);
                 System.out.println("  → staff registered (" + staffClients.size() + " total)");
                 return "OK:REGISTERED";
+
+            case "LOGIN":
+                if (parts.length < 2)
+                    return "ERROR:missing name";
+                String loginName = parts[1].trim();
+                if (UserDAO.exists(loginName)) {
+                    return "LOGIN_OK:" + loginName;
+                }
+                return "LOGIN_FAIL";
 
             case "GET_MENU":
                 return "MENU:" + serializeMenu();

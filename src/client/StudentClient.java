@@ -12,21 +12,21 @@ import java.util.List;
 
 public class StudentClient extends JFrame {
 
-    private JTextField nameField;
     private JTable menuTable;
     private DefaultTableModel menuModel;
     private JSpinner qtySpinner;
     private JTextArea cartArea;
     private JLabel totalLabel;
     private JLabel statusLabel;
-
+    private final String loggedInName;
     private List<MenuItem> menuItems;
 
     private java.util.LinkedHashMap<String, Integer> cartQty = new java.util.LinkedHashMap<>();
     private java.util.LinkedHashMap<String, Double> cartPrice = new java.util.LinkedHashMap<>();
     private double cartTotal = 0.0;
 
-    public StudentClient() {
+    public StudentClient(String loggedInName) {
+        this.loggedInName = loggedInName;
         setTitle("Smart Canteen - Student");
         setSize(1000, 650);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
@@ -57,18 +57,22 @@ public class StudentClient extends JFrame {
         JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         namePanel.setOpaque(false);
 
-        JLabel nameLbl = new JLabel("Your Name:");
-        nameLbl.setForeground(Color.WHITE);
-        nameLbl.setFont(UITheme.BODY_B);
+        JLabel welcomeLbl = new JLabel("👤  " + loggedInName);
+        welcomeLbl.setForeground(Color.WHITE);
+        welcomeLbl.setFont(UITheme.BODY_B);
 
-        nameField = new JTextField(15);
-        nameField.setFont(UITheme.BODY);
-        nameField.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UITheme.PRIMARY_DARK, 1),
-                new EmptyBorder(5, 8, 5, 8)));
+        JButton signOutBtn = new JButton("Sign Out");
+        signOutBtn.setFont(UITheme.BODY_B);
+        signOutBtn.setForeground(UITheme.PRIMARY_DARK);
+        signOutBtn.setBackground(Color.WHITE);
+        signOutBtn.setFocusPainted(false);
+        signOutBtn.setBorder(new EmptyBorder(6, 14, 6, 14));
+        signOutBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        signOutBtn.setOpaque(true);
+        signOutBtn.addActionListener(e -> signOut());
 
-        namePanel.add(nameLbl);
-        namePanel.add(nameField);
+        namePanel.add(welcomeLbl);
+        namePanel.add(signOutBtn);
         header.add(namePanel, BorderLayout.EAST);
 
         return header;
@@ -281,11 +285,6 @@ public class StudentClient extends JFrame {
     }
 
     private void placeOrder() {
-        String name = nameField.getText().trim();
-        if (name.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please enter your name.");
-            return;
-        }
         if (cartTotal == 0.0) {
             JOptionPane.showMessageDialog(this, "Your cart is empty.");
             return;
@@ -305,7 +304,8 @@ public class StudentClient extends JFrame {
         }
         String items = itemsSb.toString().replace(":", " ");
 
-        String cmd = "ORDER:" + name + ":" + items + ":" + cartTotal;
+        // Use the logged-in user's name — no name field anymore
+        String cmd = "ORDER:" + loggedInName + ":" + items + ":" + cartTotal;
 
         try {
             String response = ServerConnection.send(cmd);
@@ -314,7 +314,7 @@ public class StudentClient extends JFrame {
                 JOptionPane.showMessageDialog(this,
                         "Order placed! Order ID: " + orderId);
                 clearCart();
-                nameField.setText("");
+                // No nameField to clear anymore
                 statusLabel.setText("Order #" + orderId + " sent to kitchen.");
             } else {
                 JOptionPane.showMessageDialog(this,
@@ -326,7 +326,13 @@ public class StudentClient extends JFrame {
         }
     }
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(StudentClient::new);
+    private void signOut() {
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Sign out?", "Confirm", JOptionPane.YES_NO_OPTION);
+        if (choice != JOptionPane.YES_OPTION)
+            return;
+
+        new LoginScreen();
+        dispose();
     }
 }
