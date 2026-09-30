@@ -1,6 +1,7 @@
 package staff;
 
 import model.Order;
+import net.ClientConnection;
 import ui.UITheme;
 
 import javax.swing.*;
@@ -11,7 +12,7 @@ import java.awt.*;
 import java.util.ArrayList;
 import java.util.List;
 
-public class StaffDashboard extends JFrame implements StaffConnection.MessageListener {
+public class StaffDashboard extends JFrame implements ClientConnection.MessageListener {
 
     private DefaultTableModel orderModel;
     private JTable orderTable;
@@ -19,7 +20,7 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
     private JLabel countLabel;
     private JLabel connLabel;
 
-    private StaffConnection connection;
+    private ClientConnection connection;
     private final List<Order> orders = new ArrayList<>();
 
     public StaffDashboard() {
@@ -149,8 +150,8 @@ public class StaffDashboard extends JFrame implements StaffConnection.MessageLis
     // ---------- SERVER ----------
     private void connectToServer() {
         try {
-            connection = new StaffConnection(this);
-            connection.connect();
+            connection = new ClientConnection(this);
+            connection.connect("REGISTER_STAFF");
             SwingUtilities.invokeLater(() -> {
                 connLabel.setText("● live");
                 connLabel.setForeground(new Color(0x69F0AE));

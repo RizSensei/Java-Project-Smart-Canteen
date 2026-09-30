@@ -21,6 +21,9 @@ public class CanteenServer {
 
     // Thread-safe list of connected staff clients (for broadcast)
     private static final List<PrintWriter> staffClients = new CopyOnWriteArrayList<>();
+    private static final List<PrintWriter> studentClients = new CopyOnWriteArrayList<>();
+
+    private static final java.util.Map<PrintWriter, String> studentRegistry = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static void main(String[] args) throws IOException {
         ServerSocket serverSocket = new ServerSocket(PORT);
@@ -69,6 +72,17 @@ public class CanteenServer {
                 System.out.println("  → staff registered (" + staffClients.size() + " total)");
                 return "OK:REGISTERED";
 
+            case "REGISTER_STUDENT":
+                // Format: REGISTER_STUDENT:Name
+                if (parts.length < 2)
+                    return "ERROR:missing name";
+                String studentName = parts[1];
+                studentClients.add(out);
+                studentRegistry.put(out, studentName); // see note below
+                System.out.println("  → student registered: " + studentName +
+                        " (" + studentClients.size() + " students)");
+                return "OK:STUDENT_REGISTERED";
+
             case "LOGIN":
                 if (parts.length < 2)
                     return "ERROR:missing name";
@@ -90,9 +104,8 @@ public class CanteenServer {
 
                 int orderId = OrderDAO.placeOrder(name, items, total);
                 if (orderId > 0) {
-                    // Escape ':' inside items so the broadcast parser stays happy
                     String safeItems = items.replace(":", ";");
-                    broadcast("NEW_ORDER:" + orderId + ":" + name + ":" +
+                    broadcastToStaff("NEW_ORDER:" + orderId + ":" + name + ":" +
                             safeItems + ":" + String.format("%.2f", total));
                     return "ORDER_OK:" + orderId;
                 }
@@ -107,7 +120,9 @@ public class CanteenServer {
                 int id = Integer.parseInt(parts[1]);
                 boolean ok = OrderDAO.markReady(id);
                 if (ok) {
-                    broadcast("ORDER_UPDATED:" + id + ":READY");
+                    String update = "ORDER_UPDATED:" + id + ":READY";
+                    broadcastToStaff(update);
+                    broadcastToStudents(update);
                     return "OK:READY";
                 }
                 return "ERROR:update failed";
@@ -115,8 +130,8 @@ public class CanteenServer {
             case "GET_MY_ORDERS":
                 if (parts.length < 2)
                     return "ERROR:missing name";
-                String studentName = parts[1];
-                return "MY_ORDERS:" + serializeOrdersFor(studentName);
+                String queryName = parts[1];
+                return "MY_ORDERS:" + serializeOrdersFor(queryName);
 
             case "QUIT":
                 return "BYE";
@@ -162,9 +177,16 @@ public class CanteenServer {
         return sb.toString();
     }
 
-    private static void broadcast(String message) {
-        System.out.println("  → broadcasting: " + message);
+    private static void broadcastToStaff(String message) {
+        System.out.println("  → staff broadcast: " + message);
         for (PrintWriter w : staffClients) {
+            w.println(message);
+        }
+    }
+
+    private static void broadcastToStudents(String message) {
+        System.out.println("  → student broadcast: " + message);
+        for (PrintWriter w : studentClients) {
             w.println(message);
         }
     }

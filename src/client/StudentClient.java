@@ -10,7 +10,7 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.util.List;
 
-public class StudentClient extends JFrame {
+public class StudentClient extends JFrame implements net.ClientConnection.MessageListener {
 
     private JTable menuTable;
     private DefaultTableModel menuModel;
@@ -22,6 +22,7 @@ public class StudentClient extends JFrame {
     private List<MenuItem> menuItems;
     private DefaultTableModel myOrdersModel;
     private JTable myOrdersTable;
+    private net.ClientConnection connection;
 
     private java.util.LinkedHashMap<String, Integer> cartQty = new java.util.LinkedHashMap<>();
     private java.util.LinkedHashMap<String, Double> cartPrice = new java.util.LinkedHashMap<>();
@@ -43,6 +44,7 @@ public class StudentClient extends JFrame {
 
         loadMenu();
         loadMyOrders();
+        connectLiveUpdates();
         setVisible(true);
     }
 
@@ -413,6 +415,53 @@ public class StudentClient extends JFrame {
         } catch (Exception ex) {
             statusLabel.setText("Could not load your orders: " + ex.getMessage());
         }
+    }
+
+    private void connectLiveUpdates() {
+        try {
+            connection = new net.ClientConnection(this);
+            connection.connect("REGISTER_STUDENT:" + loggedInName);
+            statusLabel.setText("Connected — live updates on.");
+        } catch (Exception ex) {
+            statusLabel.setText("Live updates offline: " + ex.getMessage());
+        }
+    }
+
+    @Override
+    public void onMessage(String message) {
+        SwingUtilities.invokeLater(() -> handleLiveMessage(message));
+    }
+
+    private void handleLiveMessage(String message) {
+        if (message == null)
+            return;
+        System.out.println("← student recv: " + message);
+
+        if (message.startsWith("ORDER_UPDATED:")) {
+            // ORDER_UPDATED:id:STATUS
+            String[] p = message.split(":");
+            if (p.length >= 3) {
+                int updatedId = Integer.parseInt(p[1]);
+                String newStatus = p[2];
+
+                // Find the row in myOrdersModel and update its status
+                for (int i = 0; i < myOrdersModel.getRowCount(); i++) {
+                    int rowId = (int) myOrdersModel.getValueAt(i, 0);
+                    if (rowId == updatedId) {
+                        myOrdersModel.setValueAt(newStatus, i, 3);
+                        statusLabel.setText("Order #" + updatedId + " → " + newStatus);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    @Override
+    public void dispose() {
+        if (connection != null)
+            connection.close();
+        super.dispose();
     }
 
     private static class StudentStatusRenderer extends DefaultTableCellRenderer {
