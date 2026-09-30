@@ -21,8 +21,10 @@ public class StudentClient extends JFrame {
     private JLabel statusLabel;
 
     private List<MenuItem> menuItems;
+
+    private java.util.LinkedHashMap<String, Integer> cartQty = new java.util.LinkedHashMap<>();
+    private java.util.LinkedHashMap<String, Double> cartPrice = new java.util.LinkedHashMap<>();
     private double cartTotal = 0.0;
-    private StringBuilder cartContents = new StringBuilder();
 
     public StudentClient() {
         setTitle("Smart Canteen - Student");
@@ -239,23 +241,40 @@ public class StudentClient extends JFrame {
             JOptionPane.showMessageDialog(this, "Select an item from the menu first.");
             return;
         }
+
         MenuItem item = menuItems.get(row);
         int qty = (int) qtySpinner.getValue();
-        double lineTotal = item.getPrice() * qty;
 
-        cartContents.append(String.format("%-15s x%-3d  Rs. %8.2f%n",
-                item.getName(), qty, lineTotal));
-        cartTotal += lineTotal;
+        String name = item.getName();
+
+        // If item already in cart, increment; otherwise add fresh
+        cartQty.merge(name, qty, Integer::sum);
+        cartPrice.put(name, item.getPrice());
+
         refreshCart();
     }
 
     private void refreshCart() {
-        cartArea.setText(cartContents.toString());
+        StringBuilder sb = new StringBuilder();
+        cartTotal = 0.0;
+
+        for (String name : cartQty.keySet()) {
+            int qty = cartQty.get(name);
+            double price = cartPrice.get(name);
+            double lineTotal = price * qty;
+            cartTotal += lineTotal;
+
+            sb.append(String.format("%-15s x%-3d  Rs. %8.2f%n",
+                    name, qty, lineTotal));
+        }
+
+        cartArea.setText(sb.toString());
         totalLabel.setText(String.format("Total: Rs. %.2f", cartTotal));
     }
 
     private void clearCart() {
-        cartContents.setLength(0);
+        cartQty.clear();
+        cartPrice.clear();
         cartTotal = 0.0;
         refreshCart();
         statusLabel.setText("Cart cleared.");
@@ -272,13 +291,20 @@ public class StudentClient extends JFrame {
             return;
         }
 
-        // Build "Burger x2, Coke x1" for the socket message
-        String items = cartContents.toString().trim().replace("\n", ", ")
-                .replaceAll("\\s+", " ");
-        // Careful: ':' is our protocol separator, so remove any ':' from items
-        items = items.replace(":", " ");
+        StringBuilder itemsSb = new StringBuilder();
+        for (String itemName : cartQty.keySet()) {
+            int qty = cartQty.get(itemName);
+            double price = cartPrice.get(itemName);
+            double lineTotal = price * qty;
 
-        // Format: ORDER:name:items:total
+            if (itemsSb.length() > 0)
+                itemsSb.append(", ");
+            itemsSb.append(itemName)
+                    .append(" x").append(qty)
+                    .append(" = Rs. ").append(String.format("%.2f", lineTotal));
+        }
+        String items = itemsSb.toString().replace(":", " ");
+
         String cmd = "ORDER:" + name + ":" + items + ":" + cartTotal;
 
         try {
