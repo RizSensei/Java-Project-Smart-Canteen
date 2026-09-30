@@ -18,6 +18,7 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
     private JTextArea cartArea;
     private JLabel totalLabel;
     private JLabel statusLabel;
+    private JButton payBtn;
     private final String loggedInName;
     private List<MenuItem> menuItems;
     private DefaultTableModel myOrdersModel;
@@ -143,7 +144,7 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
         return mainSplit;
     }
 
-    private JScrollPane buildMyOrdersPanel() {
+    private JPanel buildMyOrdersPanel() {
         myOrdersModel = new DefaultTableModel(
                 new String[] { "ID", "Items", "Total (Rs.)", "Status" }, 0) {
             @Override
@@ -162,12 +163,9 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
         myOrdersTable.setGridColor(UITheme.BORDER);
         myOrdersTable.setShowVerticalLines(false);
 
-        // Right-align total
         DefaultTableCellRenderer right = new DefaultTableCellRenderer();
         right.setHorizontalAlignment(SwingConstants.RIGHT);
         myOrdersTable.getColumnModel().getColumn(2).setCellRenderer(right);
-
-        // Color-code status
         myOrdersTable.getColumnModel().getColumn(3)
                 .setCellRenderer(new StudentStatusRenderer());
 
@@ -176,11 +174,43 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
         myOrdersTable.getColumnModel().getColumn(2).setPreferredWidth(100);
         myOrdersTable.getColumnModel().getColumn(3).setPreferredWidth(120);
 
+        // ---- Button bar ----
+        JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        buttonBar.setOpaque(false);
+
+        JButton refreshMineBtn = new JButton("🔄 Refresh");
+        refreshMineBtn.setFont(UITheme.BODY);
+        refreshMineBtn.addActionListener(e -> loadMyOrders());
+
+        payBtn = new JButton("💵 Pay");
+        payBtn.setFont(UITheme.BODY_B);
+        payBtn.setForeground(Color.WHITE);
+        payBtn.setBackground(UITheme.ACCENT);
+        payBtn.setFocusPainted(false);
+        payBtn.setBorder(new EmptyBorder(6, 16, 6, 16));
+        payBtn.setOpaque(true);
+        payBtn.setEnabled(false); // disabled until a READY row is selected
+        payBtn.addActionListener(e -> paySelectedOrder());
+
+        buttonBar.add(refreshMineBtn);
+        buttonBar.add(payBtn);
+
+        // ---- Table + button bar in a titled wrapper ----
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setBackground(UITheme.BG);
+
         JScrollPane scroll = new JScrollPane(myOrdersTable);
-        scroll.setBorder(BorderFactory.createTitledBorder(
-                BorderFactory.createLineBorder(UITheme.BORDER),
-                "My Orders", 0, 0, UITheme.BODY_B, UITheme.TEXT));
-        return scroll;
+        wrapper.add(scroll, BorderLayout.CENTER);
+        wrapper.add(buttonBar, BorderLayout.SOUTH);
+
+        // Enable/disable Pay on selection change
+        myOrdersTable.getSelectionModel().addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting())
+                return;
+            updatePayButtonState();
+        });
+
+        return wrapper;
     }
 
     // ---------- FOOTER ----------
@@ -415,6 +445,10 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
         } catch (Exception ex) {
             statusLabel.setText("Could not load your orders: " + ex.getMessage());
         }
+
+        // Reset selection + refresh Pay button state
+        myOrdersTable.clearSelection();
+        updatePayButtonState();
     }
 
     private void connectLiveUpdates() {
@@ -453,7 +487,56 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
                         break;
                     }
                 }
+                updatePayButtonState();
             }
+        }
+    }
+
+    private void updatePayButtonState() {
+        int row = myOrdersTable.getSelectedRow();
+        boolean isReady = false;
+        if (row != -1) {
+            String status = (String) myOrdersModel.getValueAt(row, 3);
+            isReady = "READY".equals(status);
+        }
+        payBtn.setEnabled(isReady);
+    }
+
+    private void paySelectedOrder() {
+        int row = myOrdersTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Select an order first.");
+            return;
+        }
+
+        int orderId = (int) myOrdersModel.getValueAt(row, 0);
+        String status = (String) myOrdersModel.getValueAt(row, 3);
+
+        if (!"READY".equals(status)) {
+            JOptionPane.showMessageDialog(this,
+                    "Only READY orders can be paid.");
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Pay for order #" + orderId + "?",
+                "Confirm Payment", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION)
+            return;
+
+        try {
+            String response = ServerConnection.send("MARK_PAID:" + orderId);
+            if (response != null && response.startsWith("OK:PAID")) {
+                myOrdersModel.setValueAt("PAID", row, 3);
+                statusLabel.setText("Order #" + orderId + " paid. Thank you!");
+                updatePayButtonState();
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Could not pay: " + response);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Server not reachable.\n" + ex.getMessage());
         }
     }
 
@@ -488,6 +571,10 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
                 label.setBackground(UITheme.PENDING_BG);
                 label.setForeground(UITheme.PENDING_FG);
                 label.setText("● PENDING");
+            } else if ("PAID".equals(status)) {
+                label.setBackground(UITheme.PAID_BG);
+                label.setForeground(UITheme.PAID_FG);
+                label.setText("● PAID");
             } else {
                 label.setBackground(Color.WHITE);
                 label.setForeground(UITheme.TEXT);

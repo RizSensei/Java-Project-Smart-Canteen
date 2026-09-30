@@ -127,6 +127,20 @@ public class CanteenServer {
                 }
                 return "ERROR:update failed";
 
+            case "MARK_PAID": {
+                if (parts.length < 2)
+                    return "ERROR:missing order id";
+                int paidId = Integer.parseInt(parts[1]);
+                boolean paid = OrderDAO.markPaid(paidId);
+                if (paid) {
+                    String update = "ORDER_UPDATED:" + paidId + ":PAID";
+                    broadcastToStaff(update);
+                    broadcastToStudents(update);
+                    return "OK:PAID";
+                }
+                return "ERROR:order not ready or not found";
+            }
+
             case "GET_MY_ORDERS":
                 if (parts.length < 2)
                     return "ERROR:missing name";

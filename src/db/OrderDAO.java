@@ -94,4 +94,19 @@ public class OrderDAO {
         }
         return orders;
     }
+
+    public static boolean markPaid(int orderId) {
+        String sql = "UPDATE orders SET status = 'PAID' " +
+                "WHERE id = ? AND status = 'READY'";
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setInt(1, orderId);
+            return ps.executeUpdate() > 0;
+
+        } catch (SQLException e) {
+            System.out.println("markPaid error: " + e.getMessage());
+        }
+        return false;
+    }
 }
