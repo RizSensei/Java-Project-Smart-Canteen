@@ -114,7 +114,7 @@ public class CanteenServer {
             case "GET_ORDERS":
                 return "ORDERS:" + serializeOrders();
 
-            case "MARK_READY":
+            case "MARK_READY": {
                 if (parts.length < 2)
                     return "ERROR:missing order id";
                 int id = Integer.parseInt(parts[1]);
@@ -125,7 +125,8 @@ public class CanteenServer {
                     broadcastToStudents(update);
                     return "OK:READY";
                 }
-                return "ERROR:update failed";
+                return "ERROR:order not pending";
+            }
 
             case "MARK_PAID": {
                 if (parts.length < 2)

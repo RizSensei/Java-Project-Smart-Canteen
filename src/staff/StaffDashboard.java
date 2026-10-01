@@ -121,7 +121,21 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         JButton readyBtn = styledButton("✅ Mark Ready", UITheme.PRIMARY);
 
         refreshBtn.addActionListener(e -> refreshOrders());
+        readyBtn.setEnabled(false);
         readyBtn.addActionListener(e -> markReady());
+
+        // NEW: enable/disable based on selection
+        orderTable.getSelectionModel().addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting())
+                return;
+            int row = orderTable.getSelectedRow();
+            boolean isPending = false;
+            if (row != -1) {
+                String status = (String) orderModel.getValueAt(row, 4);
+                isPending = "PENDING".equals(status);
+            }
+            readyBtn.setEnabled(isPending);
+        });
 
         buttons.add(refreshBtn);
         buttons.add(readyBtn);
@@ -198,7 +212,6 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
                 String status = p[2];
                 for (Order o : orders) {
                     if (o.getId() == id) {
-                        // Order is immutable, so replace it
                         int idx = orders.indexOf(o);
                         orders.set(idx, new Order(o.getId(), o.getStudentName(),
                                 o.getItems(), o.getTotal(), status));
@@ -298,6 +311,10 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
             if (isSelected) {
                 label.setBackground(UITheme.PRIMARY);
                 label.setForeground(Color.WHITE);
+            } else if ("PAID".equals(status)) {
+                label.setBackground(UITheme.PAID_BG);
+                label.setForeground(UITheme.PAID_FG);
+                label.setText("● PAID");
             } else if ("READY".equals(status)) {
                 label.setBackground(UITheme.READY_BG);
                 label.setForeground(UITheme.READY_FG);

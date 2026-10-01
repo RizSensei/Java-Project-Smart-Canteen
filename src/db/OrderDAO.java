@@ -57,7 +57,7 @@ public class OrderDAO {
     }
 
     public static boolean markReady(int orderId) {
-        String sql = "UPDATE orders SET status = 'READY' WHERE id = ?";
+        String sql = "UPDATE orders SET status = 'READY' WHERE id = ? AND status = 'PENDING'";
         try (Connection conn = DBConnection.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
 
