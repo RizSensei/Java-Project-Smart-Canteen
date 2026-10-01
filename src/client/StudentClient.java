@@ -10,21 +10,28 @@ import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.util.List;
 
-public class StudentClient extends JFrame {
+public class StudentClient extends JFrame implements net.ClientConnection.MessageListener {
 
-    private JTextField nameField;
     private JTable menuTable;
     private DefaultTableModel menuModel;
     private JSpinner qtySpinner;
     private JTextArea cartArea;
     private JLabel totalLabel;
     private JLabel statusLabel;
-
+    private JButton payBtn;
+    private JButton cancelBtn;
+    private final String loggedInName;
     private List<MenuItem> menuItems;
-    private double cartTotal = 0.0;
-    private StringBuilder cartContents = new StringBuilder();
+    private DefaultTableModel myOrdersModel;
+    private JTable myOrdersTable;
+    private net.ClientConnection connection;
 
-    public StudentClient() {
+    private java.util.LinkedHashMap<String, Integer> cartQty = new java.util.LinkedHashMap<>();
+    private java.util.LinkedHashMap<String, Double> cartPrice = new java.util.LinkedHashMap<>();
+    private double cartTotal = 0.0;
+
+    public StudentClient(String loggedInName) {
+        this.loggedInName = loggedInName;
         setTitle("Smart Canteen - Student");
         setSize(1000, 650);
         setDefaultCloseOperation(EXIT_ON_CLOSE);
@@ -38,6 +45,8 @@ public class StudentClient extends JFrame {
         add(buildFooter(), BorderLayout.SOUTH);
 
         loadMenu();
+        loadMyOrders();
+        connectLiveUpdates();
         setVisible(true);
     }
 
@@ -55,18 +64,22 @@ public class StudentClient extends JFrame {
         JPanel namePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         namePanel.setOpaque(false);
 
-        JLabel nameLbl = new JLabel("Your Name:");
-        nameLbl.setForeground(Color.WHITE);
-        nameLbl.setFont(UITheme.BODY_B);
+        JLabel welcomeLbl = new JLabel("👤  " + loggedInName);
+        welcomeLbl.setForeground(Color.WHITE);
+        welcomeLbl.setFont(UITheme.BODY_B);
 
-        nameField = new JTextField(15);
-        nameField.setFont(UITheme.BODY);
-        nameField.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(UITheme.PRIMARY_DARK, 1),
-                new EmptyBorder(5, 8, 5, 8)));
+        JButton signOutBtn = new JButton("Sign Out");
+        signOutBtn.setFont(UITheme.BODY_B);
+        signOutBtn.setForeground(UITheme.PRIMARY_DARK);
+        signOutBtn.setBackground(Color.WHITE);
+        signOutBtn.setFocusPainted(false);
+        signOutBtn.setBorder(new EmptyBorder(6, 14, 6, 14));
+        signOutBtn.setCursor(new Cursor(Cursor.HAND_CURSOR));
+        signOutBtn.setOpaque(true);
+        signOutBtn.addActionListener(e -> signOut());
 
-        namePanel.add(nameLbl);
-        namePanel.add(nameField);
+        namePanel.add(welcomeLbl);
+        namePanel.add(signOutBtn);
         header.add(namePanel, BorderLayout.EAST);
 
         return header;
@@ -119,10 +132,97 @@ public class StudentClient extends JFrame {
         cartPanel.add(cartScroll, BorderLayout.CENTER);
         cartPanel.add(totalLabel, BorderLayout.SOUTH);
 
-        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, menuScroll, cartPanel);
-        split.setDividerLocation(600);
-        split.setBorder(null);
-        return split;
+        JSplitPane topSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, menuScroll, cartPanel);
+        topSplit.setDividerLocation(600);
+        topSplit.setBorder(null);
+
+        JSplitPane mainSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT,
+                topSplit, buildMyOrdersPanel());
+        mainSplit.setDividerLocation(360);
+        mainSplit.setBorder(null);
+        mainSplit.setResizeWeight(0.7);
+
+        return mainSplit;
+    }
+
+    private JPanel buildMyOrdersPanel() {
+        myOrdersModel = new DefaultTableModel(
+                new String[] { "ID", "Items", "Total (Rs.)", "Status" }, 0) {
+            @Override
+            public boolean isCellEditable(int r, int c) {
+                return false;
+            }
+        };
+        myOrdersTable = new JTable(myOrdersModel);
+        myOrdersTable.setFont(UITheme.BODY);
+        myOrdersTable.setRowHeight(28);
+        myOrdersTable.getTableHeader().setFont(UITheme.BODY_B);
+        myOrdersTable.getTableHeader().setBackground(UITheme.PRIMARY_DARK);
+        myOrdersTable.getTableHeader().setForeground(Color.WHITE);
+        myOrdersTable.setSelectionBackground(UITheme.PRIMARY);
+        myOrdersTable.setSelectionForeground(Color.WHITE);
+        myOrdersTable.setGridColor(UITheme.BORDER);
+        myOrdersTable.setShowVerticalLines(false);
+
+        DefaultTableCellRenderer right = new DefaultTableCellRenderer();
+        right.setHorizontalAlignment(SwingConstants.RIGHT);
+        myOrdersTable.getColumnModel().getColumn(2).setCellRenderer(right);
+        myOrdersTable.getColumnModel().getColumn(3)
+                .setCellRenderer(new StudentStatusRenderer());
+
+        myOrdersTable.getColumnModel().getColumn(0).setPreferredWidth(60);
+        myOrdersTable.getColumnModel().getColumn(1).setPreferredWidth(400);
+        myOrdersTable.getColumnModel().getColumn(2).setPreferredWidth(100);
+        myOrdersTable.getColumnModel().getColumn(3).setPreferredWidth(120);
+
+        // ---- Button bar ----
+        JPanel buttonBar = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
+        buttonBar.setOpaque(false);
+
+        JButton refreshMineBtn = new JButton("🔄 Refresh");
+        refreshMineBtn.setFont(UITheme.BODY);
+        refreshMineBtn.addActionListener(e -> loadMyOrders());
+
+        payBtn = new JButton("💵 Pay");
+        payBtn.setFont(UITheme.BODY_B);
+        payBtn.setForeground(Color.WHITE);
+        payBtn.setBackground(UITheme.ACCENT);
+        payBtn.setFocusPainted(false);
+        payBtn.setBorder(new EmptyBorder(6, 16, 6, 16));
+        payBtn.setOpaque(true);
+        payBtn.setEnabled(false); // disabled until a READY row is selected
+        payBtn.addActionListener(e -> paySelectedOrder());
+
+        cancelBtn = new JButton("❌ Cancel Order");
+        cancelBtn.setFont(UITheme.BODY_B);
+        cancelBtn.setForeground(Color.WHITE);
+        cancelBtn.setBackground(UITheme.DANGER);
+        cancelBtn.setFocusPainted(false);
+        cancelBtn.setBorder(new EmptyBorder(6, 16, 6, 16));
+        cancelBtn.setOpaque(true);
+        cancelBtn.setEnabled(false);
+        cancelBtn.addActionListener(e -> cancelSelectedOrder());
+
+        buttonBar.add(refreshMineBtn);
+        buttonBar.add(payBtn);
+        buttonBar.add(cancelBtn);
+
+        // ---- Table + button bar in a titled wrapper ----
+        JPanel wrapper = new JPanel(new BorderLayout());
+        wrapper.setBackground(UITheme.BG);
+
+        JScrollPane scroll = new JScrollPane(myOrdersTable);
+        wrapper.add(scroll, BorderLayout.CENTER);
+        wrapper.add(buttonBar, BorderLayout.SOUTH);
+
+        // Enable/disable Pay on selection change
+        myOrdersTable.getSelectionModel().addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting())
+                return;
+            updatePayButtonState();
+        });
+
+        return wrapper;
     }
 
     // ---------- FOOTER ----------
@@ -239,47 +339,67 @@ public class StudentClient extends JFrame {
             JOptionPane.showMessageDialog(this, "Select an item from the menu first.");
             return;
         }
+
         MenuItem item = menuItems.get(row);
         int qty = (int) qtySpinner.getValue();
-        double lineTotal = item.getPrice() * qty;
 
-        cartContents.append(String.format("%-15s x%-3d  Rs. %8.2f%n",
-                item.getName(), qty, lineTotal));
-        cartTotal += lineTotal;
+        String name = item.getName();
+
+        // If item already in cart, increment; otherwise add fresh
+        cartQty.merge(name, qty, Integer::sum);
+        cartPrice.put(name, item.getPrice());
+
         refreshCart();
     }
 
     private void refreshCart() {
-        cartArea.setText(cartContents.toString());
+        StringBuilder sb = new StringBuilder();
+        cartTotal = 0.0;
+
+        for (String name : cartQty.keySet()) {
+            int qty = cartQty.get(name);
+            double price = cartPrice.get(name);
+            double lineTotal = price * qty;
+            cartTotal += lineTotal;
+
+            sb.append(String.format("%-15s x%-3d  Rs. %8.2f%n",
+                    name, qty, lineTotal));
+        }
+
+        cartArea.setText(sb.toString());
         totalLabel.setText(String.format("Total: Rs. %.2f", cartTotal));
     }
 
     private void clearCart() {
-        cartContents.setLength(0);
+        cartQty.clear();
+        cartPrice.clear();
         cartTotal = 0.0;
         refreshCart();
         statusLabel.setText("Cart cleared.");
     }
 
     private void placeOrder() {
-        String name = nameField.getText().trim();
-        if (name.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Please enter your name.");
-            return;
-        }
         if (cartTotal == 0.0) {
             JOptionPane.showMessageDialog(this, "Your cart is empty.");
             return;
         }
 
-        // Build "Burger x2, Coke x1" for the socket message
-        String items = cartContents.toString().trim().replace("\n", ", ")
-                .replaceAll("\\s+", " ");
-        // Careful: ':' is our protocol separator, so remove any ':' from items
-        items = items.replace(":", " ");
+        StringBuilder itemsSb = new StringBuilder();
+        for (String itemName : cartQty.keySet()) {
+            int qty = cartQty.get(itemName);
+            double price = cartPrice.get(itemName);
+            double lineTotal = price * qty;
 
-        // Format: ORDER:name:items:total
-        String cmd = "ORDER:" + name + ":" + items + ":" + cartTotal;
+            if (itemsSb.length() > 0)
+                itemsSb.append(", ");
+            itemsSb.append(itemName)
+                    .append(" x").append(qty)
+                    .append(" = Rs. ").append(String.format("%.2f", lineTotal));
+        }
+        String items = itemsSb.toString().replace(":", " ");
+
+        // Use the logged-in user's name — no name field anymore
+        String cmd = "ORDER:" + loggedInName + ":" + items + ":" + cartTotal;
 
         try {
             String response = ServerConnection.send(cmd);
@@ -288,7 +408,8 @@ public class StudentClient extends JFrame {
                 JOptionPane.showMessageDialog(this,
                         "Order placed! Order ID: " + orderId);
                 clearCart();
-                nameField.setText("");
+                loadMyOrders();
+                // No nameField to clear anymore
                 statusLabel.setText("Order #" + orderId + " sent to kitchen.");
             } else {
                 JOptionPane.showMessageDialog(this,
@@ -300,7 +421,226 @@ public class StudentClient extends JFrame {
         }
     }
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(StudentClient::new);
+    private void signOut() {
+        int choice = JOptionPane.showConfirmDialog(this,
+                "Sign out?", "Confirm", JOptionPane.YES_NO_OPTION);
+        if (choice != JOptionPane.YES_OPTION)
+            return;
+
+        new LoginScreen();
+        dispose();
     }
+
+    private void loadMyOrders() {
+        if (myOrdersModel == null)
+            return;
+        try {
+            String response = ServerConnection.send("GET_MY_ORDERS:" + loggedInName);
+            myOrdersModel.setRowCount(0);
+
+            if (response != null && response.startsWith("MY_ORDERS:")) {
+                String body = response.substring(10);
+                if (!body.isEmpty()) {
+                    for (String entry : body.split(";")) {
+                        String[] p = entry.split("~");
+                        if (p.length == 5) {
+                            myOrdersModel.addRow(new Object[] {
+                                    Integer.parseInt(p[0]),
+                                    p[2], // items
+                                    String.format("%.2f", Double.parseDouble(p[3])),
+                                    p[4] // status
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            statusLabel.setText("Could not load your orders: " + ex.getMessage());
+        }
+
+        // Reset selection + refresh Pay button state
+        myOrdersTable.clearSelection();
+        updatePayButtonState();
+    }
+
+    private void connectLiveUpdates() {
+        try {
+            connection = new net.ClientConnection(this);
+            connection.connect("REGISTER_STUDENT:" + loggedInName);
+            statusLabel.setText("Connected — live updates on.");
+        } catch (Exception ex) {
+            statusLabel.setText("Live updates offline: " + ex.getMessage());
+        }
+    }
+
+    @Override
+    public void onMessage(String message) {
+        SwingUtilities.invokeLater(() -> handleLiveMessage(message));
+    }
+
+    private void handleLiveMessage(String message) {
+        if (message == null)
+            return;
+        System.out.println("← student recv: " + message);
+
+        if (message.startsWith("ORDER_UPDATED:")) {
+            // ORDER_UPDATED:id:STATUS
+            String[] p = message.split(":");
+            if (p.length >= 3) {
+                int updatedId = Integer.parseInt(p[1]);
+                String newStatus = p[2];
+
+                // Find the row in myOrdersModel and update its status
+                for (int i = 0; i < myOrdersModel.getRowCount(); i++) {
+                    int rowId = (int) myOrdersModel.getValueAt(i, 0);
+                    if (rowId == updatedId) {
+                        myOrdersModel.setValueAt(newStatus, i, 3);
+                        statusLabel.setText("Order #" + updatedId + " → " + newStatus);
+                        break;
+                    }
+                }
+                updatePayButtonState();
+            }
+        }
+    }
+
+    private void updatePayButtonState() {
+        int row = myOrdersTable.getSelectedRow();
+        boolean isReady = false;
+        boolean isPending = false;
+
+        if (row != -1) {
+            String status = (String) myOrdersModel.getValueAt(row, 3);
+            isReady = "READY".equals(status);
+            isPending = "PENDING".equals(status);
+        }
+
+        payBtn.setEnabled(isReady);
+        if (cancelBtn != null)
+            cancelBtn.setEnabled(isPending);
+    }
+
+    private void paySelectedOrder() {
+        int row = myOrdersTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Select an order first.");
+            return;
+        }
+
+        int orderId = (int) myOrdersModel.getValueAt(row, 0);
+        String status = (String) myOrdersModel.getValueAt(row, 3);
+
+        if (!"READY".equals(status)) {
+            JOptionPane.showMessageDialog(this,
+                    "Only READY orders can be paid.");
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Pay for order #" + orderId + "?",
+                "Confirm Payment", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION)
+            return;
+
+        try {
+            String response = ServerConnection.send("MARK_PAID:" + orderId);
+            if (response != null && response.startsWith("OK:PAID")) {
+                myOrdersModel.setValueAt("PAID", row, 3);
+                statusLabel.setText("Order #" + orderId + " paid. Thank you!");
+                updatePayButtonState();
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Could not pay: " + response);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Server not reachable.\n" + ex.getMessage());
+        }
+    }
+
+    private void cancelSelectedOrder() {
+        int row = myOrdersTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Select an order first.");
+            return;
+        }
+
+        int orderId = (int) myOrdersModel.getValueAt(row, 0);
+        String status = (String) myOrdersModel.getValueAt(row, 3);
+
+        if (!"PENDING".equals(status)) {
+            JOptionPane.showMessageDialog(this,
+                    "Only PENDING orders can be cancelled.");
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Cancel order #" + orderId + "?",
+                "Confirm Cancellation", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION)
+            return;
+
+        try {
+            String response = ServerConnection.send("CANCEL_ORDER:" + orderId);
+            if (response != null && response.startsWith("OK:CANCELLED")) {
+                myOrdersModel.setValueAt("CANCELLED", row, 3);
+                statusLabel.setText("Order #" + orderId + " cancelled.");
+                updatePayButtonState();
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Could not cancel: " + response);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Server not reachable.\n" + ex.getMessage());
+        }
+    }
+
+    @Override
+    public void dispose() {
+        if (connection != null)
+            connection.close();
+        super.dispose();
+    }
+
+    private static class StudentStatusRenderer extends DefaultTableCellRenderer {
+        @Override
+        public Component getTableCellRendererComponent(
+                JTable table, Object value, boolean isSelected,
+                boolean hasFocus, int row, int col) {
+
+            JLabel label = (JLabel) super.getTableCellRendererComponent(
+                    table, value, isSelected, hasFocus, row, col);
+            label.setHorizontalAlignment(SwingConstants.CENTER);
+            label.setFont(UITheme.BODY_B);
+            label.setOpaque(true);
+
+            String status = value == null ? "" : value.toString();
+            if (isSelected) {
+                label.setBackground(UITheme.PRIMARY);
+                label.setForeground(Color.WHITE);
+            } else if ("READY".equals(status)) {
+                label.setBackground(UITheme.READY_BG);
+                label.setForeground(UITheme.READY_FG);
+                label.setText("● READY");
+            } else if ("PENDING".equals(status)) {
+                label.setBackground(UITheme.PENDING_BG);
+                label.setForeground(UITheme.PENDING_FG);
+                label.setText("● PENDING");
+            } else if ("PAID".equals(status)) {
+                label.setBackground(UITheme.PAID_BG);
+                label.setForeground(UITheme.PAID_FG);
+                label.setText("● PAID");
+            } else if ("CANCELLED".equals(status)) {
+                label.setBackground(new Color(0xFFEBEE)); // light red
+                label.setForeground(UITheme.DANGER); // red text
+                label.setText("● CANCELLED");
+            } else {
+                label.setBackground(Color.WHITE);
+                label.setForeground(UITheme.TEXT);
+            }
+            return label;
+        }
+    }
+
 }

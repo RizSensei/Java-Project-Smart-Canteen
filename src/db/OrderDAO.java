@@ -8,44 +8,47 @@ import java.util.List;
 
 public class OrderDAO {
 
-    // Insert a new order, return its generated ID (or -1 on failure)
+    // ---- Insert a new order, return its generated ID (or -1 on failure)
     public static int placeOrder(String studentName, String items, double total) {
-        String sql = "INSERT INTO orders (student_name, total, status) VALUES (?, ?, 'PENDING')";
+        String sql = "INSERT INTO orders (student_name, items, total, status) " +
+                "VALUES (?, ?, ?, 'PENDING')";
 
         try (Connection conn = DBConnection.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+                PreparedStatement ps = conn.prepareStatement(sql,
+                        Statement.RETURN_GENERATED_KEYS)) {
 
             ps.setString(1, studentName);
-            ps.setDouble(2, total);
+            ps.setString(2, items);
+            ps.setDouble(3, total);
             ps.executeUpdate();
 
             ResultSet keys = ps.getGeneratedKeys();
-            if (keys.next()) {
+            if (keys.next())
                 return keys.getInt(1);
-            }
+
         } catch (SQLException e) {
             System.out.println("placeOrder error: " + e.getMessage());
         }
         return -1;
     }
 
-    // Fetch all orders (for staff dashboard)
+    // ---- Fetch all orders (for staff dashboard)
     public static List<Order> getAllOrders() {
         List<Order> orders = new ArrayList<>();
-        String sql = "SELECT id, student_name, total, status FROM orders ORDER BY id DESC";
+        String sql = "SELECT id, student_name, items, total, status " +
+                "FROM orders ORDER BY id ASC";
 
         try (Connection conn = DBConnection.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql);
-             ResultSet rs = ps.executeQuery()) {
+                PreparedStatement ps = conn.prepareStatement(sql);
+                ResultSet rs = ps.executeQuery()) {
 
             while (rs.next()) {
                 orders.add(new Order(
-                    rs.getInt("id"),
-                    rs.getString("student_name"),
-                    "",  // items placeholder — we'll improve later
-                    rs.getDouble("total"),
-                    rs.getString("status")
-                ));
+                        rs.getInt("id"),
+                        rs.getString("student_name"),
+                        rs.getString("items"),
+                        rs.getDouble("total"),
+                        rs.getString("status")));
             }
         } catch (SQLException e) {
             System.out.println("getAllOrders error: " + e.getMessage());
@@ -53,37 +56,72 @@ public class OrderDAO {
         return orders;
     }
 
-    // Update status to READY
     public static boolean markReady(int orderId) {
-        String sql = "UPDATE orders SET status = 'READY' WHERE id = ?";
-
+        String sql = "UPDATE orders SET status = 'READY' WHERE id = ? AND status = 'PENDING'";
         try (Connection conn = DBConnection.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+                PreparedStatement ps = conn.prepareStatement(sql)) {
 
             ps.setInt(1, orderId);
             return ps.executeUpdate() > 0;
+
         } catch (SQLException e) {
             System.out.println("markReady error: " + e.getMessage());
         }
         return false;
     }
 
-    // Test
-    public static void main(String[] args) {
-        int id = placeOrder("Ram", "Burger x2, Coke x1", 350.00);
-        System.out.println("Inserted order ID: " + id);
+    public static List<Order> getOrdersForStudent(String studentName) {
+        List<Order> orders = new ArrayList<>();
+        String sql = "SELECT id, student_name, items, total, status " +
+                "FROM orders WHERE student_name = ? ORDER BY id ASC";
 
-        System.out.println("\nAll orders:");
-        for (Order o : getAllOrders()) {
-            System.out.println(o);
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, studentName);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    orders.add(new Order(
+                            rs.getInt("id"),
+                            rs.getString("student_name"),
+                            rs.getString("items"),
+                            rs.getDouble("total"),
+                            rs.getString("status")));
+                }
+            }
+        } catch (SQLException e) {
+            System.out.println("getOrdersForStudent error: " + e.getMessage());
         }
+        return orders;
+    }
 
-        System.out.println("\nMarking order #" + id + " as READY...");
-        markReady(id);
+    public static boolean markPaid(int orderId) {
+        String sql = "UPDATE orders SET status = 'PAID' " +
+                "WHERE id = ? AND status = 'READY'";
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
 
-        System.out.println("\nAfter update:");
-        for (Order o : getAllOrders()) {
-            System.out.println(o);
+            ps.setInt(1, orderId);
+            return ps.executeUpdate() > 0;
+
+        } catch (SQLException e) {
+            System.out.println("markPaid error: " + e.getMessage());
         }
+        return false;
+    }
+
+    public static boolean cancelOrder(int orderId) {
+        String sql = "UPDATE orders SET status = 'CANCELLED' " +
+                "WHERE id = ? AND status = 'PENDING'";
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setInt(1, orderId);
+            return ps.executeUpdate() > 0;
+
+        } catch (SQLException e) {
+            System.out.println("cancelOrder error: " + e.getMessage());
+        }
+        return false;
     }
 }

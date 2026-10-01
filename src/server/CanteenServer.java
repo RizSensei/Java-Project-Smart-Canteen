@@ -2,6 +2,7 @@ package server;
 
 import db.MenuDAO;
 import db.OrderDAO;
+import db.UserDAO;
 import model.MenuItem;
 import model.Order;
 
@@ -20,6 +21,9 @@ public class CanteenServer {
 
     // Thread-safe list of connected staff clients (for broadcast)
     private static final List<PrintWriter> staffClients = new CopyOnWriteArrayList<>();
+    private static final List<PrintWriter> studentClients = new CopyOnWriteArrayList<>();
+
+    private static final java.util.Map<PrintWriter, String> studentRegistry = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static void main(String[] args) throws IOException {
         ServerSocket serverSocket = new ServerSocket(PORT);
@@ -37,10 +41,9 @@ public class CanteenServer {
 
     private static void handleClient(Socket socket) {
         try (
-            BufferedReader in = new BufferedReader(
-                    new InputStreamReader(socket.getInputStream()));
-            PrintWriter out = new PrintWriter(socket.getOutputStream(), true)
-        ) {
+                BufferedReader in = new BufferedReader(
+                        new InputStreamReader(socket.getInputStream()));
+                PrintWriter out = new PrintWriter(socket.getOutputStream(), true)) {
             String line;
             while ((line = in.readLine()) != null) {
                 System.out.println("← " + line);
@@ -54,7 +57,7 @@ public class CanteenServer {
         } finally {
             // Remove this client from staff list if it was a staff client
             // (we can't know which PrintWriter belongs to which socket easily,
-            //  so we clean up lazily — see broadcast below)
+            // so we clean up lazily — see broadcast below)
         }
     }
 
@@ -69,20 +72,41 @@ public class CanteenServer {
                 System.out.println("  → staff registered (" + staffClients.size() + " total)");
                 return "OK:REGISTERED";
 
+            case "REGISTER_STUDENT":
+                // Format: REGISTER_STUDENT:Name
+                if (parts.length < 2)
+                    return "ERROR:missing name";
+                String studentName = parts[1];
+                studentClients.add(out);
+                studentRegistry.put(out, studentName); // see note below
+                System.out.println("  → student registered: " + studentName +
+                        " (" + studentClients.size() + " students)");
+                return "OK:STUDENT_REGISTERED";
+
+            case "LOGIN":
+                if (parts.length < 2)
+                    return "ERROR:missing name";
+                String loginName = parts[1].trim();
+                if (UserDAO.exists(loginName)) {
+                    return "LOGIN_OK:" + loginName;
+                }
+                return "LOGIN_FAIL";
+
             case "GET_MENU":
                 return "MENU:" + serializeMenu();
 
             case "ORDER":
-                // Format: ORDER:studentName:items:total
-                if (parts.length < 4) return "ERROR:bad order format";
+                if (parts.length < 4)
+                    return "ERROR:bad order format";
                 String name = parts[1];
                 String items = parts[2];
                 double total = Double.parseDouble(parts[3]);
 
                 int orderId = OrderDAO.placeOrder(name, items, total);
                 if (orderId > 0) {
-                    broadcast("NEW_ORDER:" + orderId + ":" + name + ":" +
-                              String.format("%.2f", total));
+                    String safeItems = items.replace(":", ";");
+                    broadcastToStaff("NEW_ORDER:" + orderId + ":" + name + ":" +
+                            safeItems + ":" + String.format("%.2f", total));
                     return "ORDER_OK:" + orderId;
                 }
                 return "ERROR:failed to save order";
@@ -90,15 +114,53 @@ public class CanteenServer {
             case "GET_ORDERS":
                 return "ORDERS:" + serializeOrders();
 
-            case "MARK_READY":
-                if (parts.length < 2) return "ERROR:missing order id";
+            case "MARK_READY": {
+                if (parts.length < 2)
+                    return "ERROR:missing order id";
                 int id = Integer.parseInt(parts[1]);
                 boolean ok = OrderDAO.markReady(id);
                 if (ok) {
-                    broadcast("ORDER_UPDATED:" + id + ":READY");
+                    String update = "ORDER_UPDATED:" + id + ":READY";
+                    broadcastToStaff(update);
+                    broadcastToStudents(update);
                     return "OK:READY";
                 }
-                return "ERROR:update failed";
+                return "ERROR:order not pending";
+            }
+
+            case "MARK_PAID": {
+                if (parts.length < 2)
+                    return "ERROR:missing order id";
+                int paidId = Integer.parseInt(parts[1]);
+                boolean paid = OrderDAO.markPaid(paidId);
+                if (paid) {
+                    String update = "ORDER_UPDATED:" + paidId + ":PAID";
+                    broadcastToStaff(update);
+                    broadcastToStudents(update);
+                    return "OK:PAID";
+                }
+                return "ERROR:order not ready or not found";
+            }
+
+            case "CANCEL_ORDER": {
+                if (parts.length < 2)
+                    return "ERROR:missing order id";
+                int cancelId = Integer.parseInt(parts[1]);
+                boolean ok = OrderDAO.cancelOrder(cancelId);
+                if (ok) {
+                    String update = "ORDER_UPDATED:" + cancelId + ":CANCELLED";
+                    broadcastToStaff(update);
+                    broadcastToStudents(update);
+                    return "OK:CANCELLED";
+                }
+                return "ERROR:order not pending";
+            }
+
+            case "GET_MY_ORDERS":
+                if (parts.length < 2)
+                    return "ERROR:missing name";
+                String queryName = parts[1];
+                return "MY_ORDERS:" + serializeOrdersFor(queryName);
 
             case "QUIT":
                 return "BYE";
@@ -112,8 +174,8 @@ public class CanteenServer {
         StringBuilder sb = new StringBuilder();
         for (MenuItem m : MenuDAO.getAllItems()) {
             sb.append(m.getId()).append("~")
-              .append(m.getName()).append("~")
-              .append(m.getPrice()).append(";");
+                    .append(m.getName()).append("~")
+                    .append(m.getPrice()).append(";");
         }
         return sb.toString();
     }
@@ -122,16 +184,38 @@ public class CanteenServer {
         StringBuilder sb = new StringBuilder();
         for (Order o : OrderDAO.getAllOrders()) {
             sb.append(o.getId()).append("~")
-              .append(o.getStudentName()).append("~")
-              .append(o.getTotal()).append("~")
-              .append(o.getStatus()).append(";");
+                    .append(o.getStudentName()).append("~")
+                    .append(o.getItems().replace("~", "-").replace(";", ","))
+                    .append("~")
+                    .append(o.getTotal()).append("~")
+                    .append(o.getStatus()).append(";");
         }
         return sb.toString();
     }
 
-    private static void broadcast(String message) {
-        System.out.println("  → broadcasting: " + message);
+    private static String serializeOrdersFor(String studentName) {
+        StringBuilder sb = new StringBuilder();
+        for (Order o : OrderDAO.getOrdersForStudent(studentName)) {
+            sb.append(o.getId()).append("~")
+                    .append(o.getStudentName()).append("~")
+                    .append(o.getItems().replace("~", "-").replace(";", ","))
+                    .append("~")
+                    .append(o.getTotal()).append("~")
+                    .append(o.getStatus()).append(";");
+        }
+        return sb.toString();
+    }
+
+    private static void broadcastToStaff(String message) {
+        System.out.println("  → staff broadcast: " + message);
         for (PrintWriter w : staffClients) {
+            w.println(message);
+        }
+    }
+
+    private static void broadcastToStudents(String message) {
+        System.out.println("  → student broadcast: " + message);
+        for (PrintWriter w : studentClients) {
             w.println(message);
         }
     }

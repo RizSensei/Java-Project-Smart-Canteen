@@ -21,6 +21,8 @@ public class UITheme {
     public static final Color PENDING_FG    = new Color(0x8A6D00);
     public static final Color READY_BG      = new Color(0xD4EDDA);
     public static final Color READY_FG      = new Color(0x1B5E20);
+    public static final Color PAID_BG      = new Color(0xE3F2FD);
+    public static final Color PAID_FG      = new Color(0x0D47A1);
 
     // Fonts
     public static final Font H1       = new Font("Segoe UI", Font.BOLD, 22);
