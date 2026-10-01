@@ -19,6 +19,7 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
     private JLabel totalLabel;
     private JLabel statusLabel;
     private JButton payBtn;
+    private JButton cancelBtn;
     private final String loggedInName;
     private List<MenuItem> menuItems;
     private DefaultTableModel myOrdersModel;
@@ -192,8 +193,19 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
         payBtn.setEnabled(false); // disabled until a READY row is selected
         payBtn.addActionListener(e -> paySelectedOrder());
 
+        cancelBtn = new JButton("❌ Cancel Order");
+        cancelBtn.setFont(UITheme.BODY_B);
+        cancelBtn.setForeground(Color.WHITE);
+        cancelBtn.setBackground(UITheme.DANGER);
+        cancelBtn.setFocusPainted(false);
+        cancelBtn.setBorder(new EmptyBorder(6, 16, 6, 16));
+        cancelBtn.setOpaque(true);
+        cancelBtn.setEnabled(false);
+        cancelBtn.addActionListener(e -> cancelSelectedOrder());
+
         buttonBar.add(refreshMineBtn);
         buttonBar.add(payBtn);
+        buttonBar.add(cancelBtn);
 
         // ---- Table + button bar in a titled wrapper ----
         JPanel wrapper = new JPanel(new BorderLayout());
@@ -495,11 +507,17 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
     private void updatePayButtonState() {
         int row = myOrdersTable.getSelectedRow();
         boolean isReady = false;
+        boolean isPending = false;
+
         if (row != -1) {
             String status = (String) myOrdersModel.getValueAt(row, 3);
             isReady = "READY".equals(status);
+            isPending = "PENDING".equals(status);
         }
+
         payBtn.setEnabled(isReady);
+        if (cancelBtn != null)
+            cancelBtn.setEnabled(isPending);
     }
 
     private void paySelectedOrder() {
@@ -533,6 +551,44 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
             } else {
                 JOptionPane.showMessageDialog(this,
                         "Could not pay: " + response);
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Server not reachable.\n" + ex.getMessage());
+        }
+    }
+
+    private void cancelSelectedOrder() {
+        int row = myOrdersTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Select an order first.");
+            return;
+        }
+
+        int orderId = (int) myOrdersModel.getValueAt(row, 0);
+        String status = (String) myOrdersModel.getValueAt(row, 3);
+
+        if (!"PENDING".equals(status)) {
+            JOptionPane.showMessageDialog(this,
+                    "Only PENDING orders can be cancelled.");
+            return;
+        }
+
+        int confirm = JOptionPane.showConfirmDialog(this,
+                "Cancel order #" + orderId + "?",
+                "Confirm Cancellation", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION)
+            return;
+
+        try {
+            String response = ServerConnection.send("CANCEL_ORDER:" + orderId);
+            if (response != null && response.startsWith("OK:CANCELLED")) {
+                myOrdersModel.setValueAt("CANCELLED", row, 3);
+                statusLabel.setText("Order #" + orderId + " cancelled.");
+                updatePayButtonState();
+            } else {
+                JOptionPane.showMessageDialog(this,
+                        "Could not cancel: " + response);
             }
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
@@ -575,6 +631,10 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
                 label.setBackground(UITheme.PAID_BG);
                 label.setForeground(UITheme.PAID_FG);
                 label.setText("● PAID");
+            } else if ("CANCELLED".equals(status)) {
+                label.setBackground(new Color(0xFFEBEE)); // light red
+                label.setForeground(UITheme.DANGER); // red text
+                label.setText("● CANCELLED");
             } else {
                 label.setBackground(Color.WHITE);
                 label.setForeground(UITheme.TEXT);

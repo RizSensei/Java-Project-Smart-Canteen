@@ -142,6 +142,20 @@ public class CanteenServer {
                 return "ERROR:order not ready or not found";
             }
 
+            case "CANCEL_ORDER": {
+                if (parts.length < 2)
+                    return "ERROR:missing order id";
+                int cancelId = Integer.parseInt(parts[1]);
+                boolean ok = OrderDAO.cancelOrder(cancelId);
+                if (ok) {
+                    String update = "ORDER_UPDATED:" + cancelId + ":CANCELLED";
+                    broadcastToStaff(update);
+                    broadcastToStudents(update);
+                    return "OK:CANCELLED";
+                }
+                return "ERROR:order not pending";
+            }
+
             case "GET_MY_ORDERS":
                 if (parts.length < 2)
                     return "ERROR:missing name";

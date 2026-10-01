@@ -323,6 +323,10 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
                 label.setBackground(UITheme.PENDING_BG);
                 label.setForeground(UITheme.PENDING_FG);
                 label.setText("● PENDING");
+            } else if ("CANCELLED".equals(status)) {
+                label.setBackground(new Color(0xFFEBEE));
+                label.setForeground(UITheme.DANGER);
+                label.setText("● CANCELLED");
             } else {
                 label.setBackground(Color.WHITE);
                 label.setForeground(UITheme.TEXT);
