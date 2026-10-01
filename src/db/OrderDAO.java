@@ -56,6 +56,109 @@ public class OrderDAO {
         return orders;
     }
 
+    /** Returns the most recent PENDING order for the given student, or null. */
+    public static Order getPendingOrderForStudent(String studentName) {
+        String sql = "SELECT id, student_name, items, total, status " +
+                "FROM orders WHERE student_name = ? AND status = 'PENDING' " +
+                "ORDER BY id DESC LIMIT 1";
+
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, studentName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new Order(
+                            rs.getInt("id"),
+                            rs.getString("student_name"),
+                            rs.getString("items"),
+                            rs.getDouble("total"),
+                            rs.getString("status"));
+                }
+            }
+        } catch (SQLException e) {
+            System.out.println("getPendingOrderForStudent error: " + e.getMessage());
+        }
+        return null;
+    }
+
+    /** Update items and total on an existing order. */
+    public static boolean updateOrderItemsAndTotal(int orderId,
+            String newItems,
+            double newTotal) {
+        String sql = "UPDATE orders SET items = ?, total = ? " +
+                "WHERE id = ? AND status = 'PENDING'";
+
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, newItems);
+            ps.setDouble(2, newTotal);
+            ps.setInt(3, orderId);
+            return ps.executeUpdate() > 0;
+
+        } catch (SQLException e) {
+            System.out.println("updateOrderItemsAndTotal error: " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Places an order. If the student already has a PENDING order,
+     * merges the new items into it and returns the same order ID.
+     * Otherwise creates a new order.
+     *
+     * Returns the order ID, or -1 on failure.
+     */
+    public static int placeOrMergeOrder(String studentName,
+            String newItems,
+            double newTotal) {
+
+        // Build a price lookup once, reuse for both branches
+        java.util.Map<String, Double> priceLookup = new java.util.HashMap<>();
+        for (model.MenuItem m : MenuDAO.getAllItems()) {
+            priceLookup.put(m.getName(), m.getPrice());
+        }
+
+        Order pending = getPendingOrderForStudent(studentName);
+
+        // ---- No existing PENDING order: insert fresh with correct total ----
+        if (pending == null) {
+            java.util.Map<String, Integer> newOnes = ItemMerger.parseQuantities(newItems);
+
+            String cleanItems = ItemMerger.rebuild(newOnes,
+                    name -> priceLookup.getOrDefault(name, 0.0));
+
+            double computedTotal = 0.0;
+            for (java.util.Map.Entry<String, Integer> e : newOnes.entrySet()) {
+                computedTotal += priceLookup.getOrDefault(e.getKey(), 0.0)
+                        * e.getValue();
+            }
+
+            return placeOrder(studentName, cleanItems, computedTotal);
+        }
+
+        // ---- Merge into existing PENDING order ----
+        java.util.Map<String, Integer> merged = ItemMerger.parseQuantities(pending.getItems());
+        java.util.Map<String, Integer> newOnes = ItemMerger.parseQuantities(newItems);
+
+        for (java.util.Map.Entry<String, Integer> e : newOnes.entrySet()) {
+            merged.merge(e.getKey(), e.getValue(), Integer::sum);
+        }
+
+        String mergedItems = ItemMerger.rebuild(merged,
+                name -> priceLookup.getOrDefault(name, 0.0));
+
+        double mergedTotal = 0.0;
+        for (java.util.Map.Entry<String, Integer> e : merged.entrySet()) {
+            mergedTotal += priceLookup.getOrDefault(e.getKey(), 0.0) * e.getValue();
+        }
+
+        boolean ok = updateOrderItemsAndTotal(pending.getId(),
+                mergedItems, mergedTotal);
+        return ok ? pending.getId() : -1;
+    }
+
     public static boolean markReady(int orderId) {
         String sql = "UPDATE orders SET status = 'READY' WHERE id = ? AND status = 'PENDING'";
         try (Connection conn = DBConnection.getConnection();
@@ -123,5 +226,29 @@ public class OrderDAO {
             System.out.println("cancelOrder error: " + e.getMessage());
         }
         return false;
+    }
+
+    public static Order getOrderById(int orderId) {
+        String sql = "SELECT id, student_name, items, total, status " +
+                "FROM orders WHERE id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+                PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setInt(1, orderId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return new Order(
+                            rs.getInt("id"),
+                            rs.getString("student_name"),
+                            rs.getString("items"),
+                            rs.getDouble("total"),
+                            rs.getString("status"));
+                }
+            }
+        } catch (SQLException e) {
+            System.out.println("getOrderById error: " + e.getMessage());
+        }
+        return null;
     }
 }
