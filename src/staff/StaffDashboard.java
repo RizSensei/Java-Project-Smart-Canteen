@@ -19,6 +19,7 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
     private JLabel statusLabel;
     private JLabel countLabel;
     private JLabel connLabel;
+    private JButton billBtn;
 
     private ClientConnection connection;
     private final List<Order> orders = new ArrayList<>();
@@ -124,17 +125,25 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         readyBtn.setEnabled(false);
         readyBtn.addActionListener(e -> markReady());
 
+        billBtn = styledButton("🖨 Generate Bill", UITheme.PRIMARY_DARK);
+        billBtn.setEnabled(false);
+        billBtn.addActionListener(e -> showBill());
+        buttons.add(billBtn);
+
         // NEW: enable/disable based on selection
         orderTable.getSelectionModel().addListSelectionListener(e -> {
             if (e.getValueIsAdjusting())
                 return;
             int row = orderTable.getSelectedRow();
             boolean isPending = false;
+            boolean isPaid = false;
             if (row != -1) {
                 String status = (String) orderModel.getValueAt(row, 4);
                 isPending = "PENDING".equals(status);
+                isPaid = "PAID".equals(status);
             }
             readyBtn.setEnabled(isPending);
+            billBtn.setEnabled(isPaid);
         });
 
         buttons.add(refreshBtn);
@@ -307,6 +316,55 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         // Send and let the broadcast update the table
         connection.send("MARK_READY:" + orderId);
         statusLabel.setText("Marking #" + orderId + " as READY...");
+    }
+
+    private void showBill() {
+        int row = orderTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Select a paid order first.");
+            return;
+        }
+
+        int orderId = (int) orderModel.getValueAt(row, 0);
+
+        // Find the full Order object
+        Order target = null;
+        for (Order o : orders) {
+            if (o.getId() == orderId) {
+                target = o;
+                break;
+            }
+        }
+        if (target == null) {
+            JOptionPane.showMessageDialog(this, "Order not found in memory.");
+            return;
+        }
+
+        if (!"PAID".equals(target.getStatus())) {
+            JOptionPane.showMessageDialog(this,
+                    "Bills are only available for PAID orders.");
+            return;
+        }
+
+        java.io.File pdf = BillService.generateBill(target);
+        if (pdf == null) {
+            JOptionPane.showMessageDialog(this, "Failed to generate bill.");
+            return;
+        }
+
+        // Offer to open it
+        int open = JOptionPane.showConfirmDialog(this,
+                "Bill saved to:\n" + pdf.getAbsolutePath() +
+                        "\n\nOpen it now?",
+                "Bill Generated", JOptionPane.YES_NO_OPTION);
+        if (open == JOptionPane.YES_OPTION) {
+            try {
+                java.awt.Desktop.getDesktop().open(pdf);
+            } catch (Exception ex) {
+                JOptionPane.showMessageDialog(this,
+                        "Could not open file: " + ex.getMessage());
+            }
+        }
     }
 
     // ---------- Custom status renderer ----------
