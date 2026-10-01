@@ -84,10 +84,12 @@ public class CanteenServer {
                 return "OK:STUDENT_REGISTERED";
 
             case "LOGIN":
-                if (parts.length < 2)
-                    return "ERROR:missing name";
+                if (parts.length < 3)
+                    return "ERROR:missing name or password";
                 String loginName = parts[1].trim();
-                if (UserDAO.exists(loginName)) {
+                String loginPass = parts[2];
+
+                if (UserDAO.validate(loginName, loginPass)) {
                     return "LOGIN_OK:" + loginName;
                 }
                 return "LOGIN_FAIL";
@@ -95,21 +97,26 @@ public class CanteenServer {
             case "GET_MENU":
                 return "MENU:" + serializeMenu();
 
-            case "ORDER":
+            case "ORDER": {
                 if (parts.length < 4)
                     return "ERROR:bad order format";
                 String name = parts[1];
                 String items = parts[2];
-                double total = Double.parseDouble(parts[3]);
+                // We ignore the client-supplied total and recompute server-side
+                int orderId = OrderDAO.placeOrMergeOrder(name, items, 0);
 
-                int orderId = OrderDAO.placeOrder(name, items, total);
                 if (orderId > 0) {
-                    String safeItems = items.replace(":", ";");
-                    broadcastToStaff("NEW_ORDER:" + orderId + ":" + name + ":" +
-                            safeItems + ":" + String.format("%.2f", total));
+                    // Fetch the current state to broadcast accurate items + total
+                    Order o = OrderDAO.getOrderById(orderId);
+                    if (o != null) {
+                        String safeItems = o.getItems().replace(":", ";");
+                        broadcastToStaff("NEW_ORDER:" + orderId + ":" + name + ":" +
+                                safeItems + ":" + String.format("%.2f", o.getTotal()));
+                    }
                     return "ORDER_OK:" + orderId;
                 }
                 return "ERROR:failed to save order";
+            }
 
             case "GET_ORDERS":
                 return "ORDERS:" + serializeOrders();

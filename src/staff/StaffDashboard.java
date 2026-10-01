@@ -192,19 +192,34 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
             return;
 
         if (message.startsWith("NEW_ORDER:")) {
-            // NEW_ORDER:id:name:items:total ← items may contain ':' escaped as ';'
             String[] p = message.split(":");
             if (p.length >= 5) {
                 int id = Integer.parseInt(p[1]);
                 String name = p[2];
                 String items = p[3].replace(";", ":");
                 double total = Double.parseDouble(p[4]);
-                orders.add(new Order(id, name, items, total, "PENDING"));
+
+                // If the order already exists in memory, update it; else add
+                boolean updated = false;
+                for (int i = 0; i < orders.size(); i++) {
+                    if (orders.get(i).getId() == id) {
+                        orders.set(i, new Order(id, name, items, total, "PENDING"));
+                        updated = true;
+                        break;
+                    }
+                }
+                if (!updated) {
+                    orders.add(new Order(id, name, items, total, "PENDING"));
+                    Toolkit.getDefaultToolkit().beep();
+                    statusLabel.setText("⚡ New order #" + id + " from " + name);
+                } else {
+                    statusLabel.setText("✏ Order #" + id + " updated");
+                }
                 rebuildTable();
-                statusLabel.setText("⚡ New order #" + id + " from " + name);
-                Toolkit.getDefaultToolkit().beep();
             }
-        } else if (message.startsWith("ORDER_UPDATED:")) {
+        }
+
+        else if (message.startsWith("ORDER_UPDATED:")) {
             // ORDER_UPDATED:id:STATUS
             String[] p = message.split(":");
             if (p.length >= 3) {
