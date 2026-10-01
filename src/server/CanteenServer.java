@@ -84,10 +84,12 @@ public class CanteenServer {
                 return "OK:STUDENT_REGISTERED";
 
             case "LOGIN":
-                if (parts.length < 2)
-                    return "ERROR:missing name";
+                if (parts.length < 3)
+                    return "ERROR:missing name or password";
                 String loginName = parts[1].trim();
-                if (UserDAO.exists(loginName)) {
+                String loginPass = parts[2];
+
+                if (UserDAO.validate(loginName, loginPass)) {
                     return "LOGIN_OK:" + loginName;
                 }
                 return "LOGIN_FAIL";
