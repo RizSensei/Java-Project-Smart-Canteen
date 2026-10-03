@@ -38,6 +38,10 @@ public final class BillGenerator {
         }
 
         File output = getBillFile(order);
+        File billDirectory = output.getParentFile();
+        if (!billDirectory.isDirectory() && !billDirectory.mkdirs() && !billDirectory.isDirectory()) {
+            throw new IOException("Could not create bill directory: " + billDirectory.getAbsolutePath());
+        }
         Document document = new Document(PageSize.A4, 48, 48, 48, 48);
         try (FileOutputStream stream = new FileOutputStream(output)) {
             PdfWriter.getInstance(document, stream);
@@ -95,12 +99,17 @@ public final class BillGenerator {
         return output;
     }
 
-    public static File getBillFile(Order order) {
+   public static File getBillFile(Order order) {
         if (order == null) {
             throw new IllegalArgumentException("Order cannot be null.");
         }
         String customerName = safeFileNamePart(order.getStudentName());
-        return new File("Bill_Order_" + order.getId() + "_" + customerName + ".pdf");
+        File workingDirectory = new File("").getAbsoluteFile();
+        File sourceDirectory = new File(workingDirectory, "billing").isDirectory()
+                ? workingDirectory
+                : new File(workingDirectory, "src");
+        return new File(new File(sourceDirectory, "bill"),
+                "Bill_Order_" + order.getId() + "_" + customerName + ".pdf");
     }
 
     private static String safeFileNamePart(String text) {
