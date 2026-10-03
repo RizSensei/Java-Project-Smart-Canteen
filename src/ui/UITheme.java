@@ -6,9 +6,9 @@ import java.awt.Font;
 public class UITheme {
 
     // Primary palette
-    public static final Color PRIMARY       = new Color(0x2E7D32);  // green
-    public static final Color PRIMARY_DARK  = new Color(0x1B5E20);
-    public static final Color ACCENT        = new Color(0xFF6F00);  // orange
+    public static final Color PRIMARY       = new Color(0xC2185B);  // pink
+    public static final Color PRIMARY_DARK  = new Color(0x880E4F);
+    public static final Color ACCENT        = new Color(0xAD1457);
     public static final Color DANGER        = new Color(0xC62828);  // red
     public static final Color BG            = new Color(0xF5F5F5);  // light gray
     public static final Color CARD          = Color.WHITE;
@@ -19,8 +19,8 @@ public class UITheme {
     // Status colors
     public static final Color PENDING_BG    = new Color(0xFFF3CD);
     public static final Color PENDING_FG    = new Color(0x8A6D00);
-    public static final Color READY_BG      = new Color(0xD4EDDA);
-    public static final Color READY_FG      = new Color(0x1B5E20);
+    public static final Color READY_BG      = new Color(0xFCE4EC);
+    public static final Color READY_FG      = new Color(0x880E4F);
     public static final Color PAID_BG      = new Color(0xE3F2FD);
     public static final Color PAID_FG      = new Color(0x0D47A1);
 

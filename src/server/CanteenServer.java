@@ -121,6 +121,29 @@ public class CanteenServer {
             case "GET_ORDERS":
                 return "ORDERS:" + serializeOrders();
 
+            case "BILL_GENERATED": {
+                if (!staffClients.contains(out))
+                    return "ERROR:only staff can send bill notifications";
+                if (parts.length < 3)
+                    return "ERROR:missing order id or bill path";
+
+                int billOrderId = Integer.parseInt(parts[1]);
+                Order billOrder = OrderDAO.getOrderById(billOrderId);
+                if (billOrder == null || !"PAID".equalsIgnoreCase(billOrder.getStatus()))
+                    return "ERROR:bill notifications require a paid order";
+
+                String notification = "BILL_GENERATED:" + billOrderId + ":" + parts[2];
+                boolean delivered = false;
+                for (java.util.Map.Entry<PrintWriter, String> student : studentRegistry.entrySet()) {
+                    if (billOrder.getStudentName().equals(student.getValue())) {
+                        student.getKey().println(notification);
+                        delivered = true;
+                    }
+                }
+                return delivered ? "OK:BILL_NOTIFICATION_SENT:" + billOrderId
+                        : "ERROR:student is not connected";
+            }
+
             case "MARK_READY": {
                 if (parts.length < 2)
                     return "ERROR:missing order id";

@@ -8,6 +8,9 @@ import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 
 public class StudentClient extends JFrame implements net.ClientConnection.MessageListener {
@@ -501,6 +504,48 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
                 }
                 updatePayButtonState();
             }
+        } else if (message.startsWith("BILL_GENERATED:")) {
+            showGeneratedBill(message);
+        }
+    }
+
+    private void showGeneratedBill(String message) {
+        String[] parts = message.split(":", 3);
+        if (parts.length != 3) {
+            return;
+        }
+
+        try {
+            int orderId = Integer.parseInt(parts[1]);
+            String path = new String(Base64.getUrlDecoder().decode(parts[2]), StandardCharsets.UTF_8);
+            File bill = new File(path);
+            Object[] options = { "View Bill", "Close" };
+            int choice = JOptionPane.showOptionDialog(this,
+                    "Your bill for Order #" + orderId
+                            + " has been generated! Would you like to view it now?",
+                    "Bill Generated", JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE,
+                    null, options, options[0]);
+            if (choice == 0) {
+                if (!bill.isFile()) {
+                    JOptionPane.showMessageDialog(this,
+                            "The bill file is not available on this device.\n" + bill.getAbsolutePath(),
+                            "Bill Not Available", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                if (!Desktop.isDesktopSupported()
+                        || !Desktop.getDesktop().isSupported(Desktop.Action.OPEN)) {
+                    JOptionPane.showMessageDialog(this,
+                            "This system cannot open the bill automatically.\n"
+                                    + bill.getAbsolutePath(),
+                            "Cannot Open Bill", JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
+                Desktop.getDesktop().open(bill.getAbsoluteFile());
+            }
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Could not open the bill.\n" + ex.getMessage(),
+                    "Cannot Open Bill", JOptionPane.ERROR_MESSAGE);
         }
     }
 

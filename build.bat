@@ -4,7 +4,7 @@ echo.
 
 cd src
 
-javac -cp ".;../lib/mysql-connector-j-26.7.0.jar" ^
+javac -cp ".;../lib/*" ^
     net/ClientConnection.java ^
     model/MenuItem.java ^
     model/Order.java ^
@@ -15,6 +15,7 @@ javac -cp ".;../lib/mysql-connector-j-26.7.0.jar" ^
     client/ServerConnection.java ^
     client/LoginScreen.java ^
     client/StudentClient.java ^
+    billing/BillGenerator.java ^
     staff/StaffDashboard.java ^
     server/CanteenServer.java
 

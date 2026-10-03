@@ -8,8 +8,13 @@ import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
+
+import billing.BillGenerator;
+
 import java.awt.*;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 
 public class StaffDashboard extends JFrame implements ClientConnection.MessageListener {
@@ -119,10 +124,13 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
 
         JButton refreshBtn = styledButton("🔄 Refresh", UITheme.PRIMARY_DARK);
         JButton readyBtn = styledButton("✅ Mark Ready", UITheme.PRIMARY);
+        JButton billBtn = styledButton("Generate Bill", UITheme.PRIMARY_DARK);
 
         refreshBtn.addActionListener(e -> refreshOrders());
         readyBtn.setEnabled(false);
         readyBtn.addActionListener(e -> markReady());
+        billBtn.setEnabled(false);
+        billBtn.addActionListener(e -> generateBill());
 
         // NEW: enable/disable based on selection
         orderTable.getSelectionModel().addListSelectionListener(e -> {
@@ -130,15 +138,20 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
                 return;
             int row = orderTable.getSelectedRow();
             boolean isPending = false;
+            boolean isPaid = false;
             if (row != -1) {
-                String status = (String) orderModel.getValueAt(row, 4);
+                int modelRow = orderTable.convertRowIndexToModel(row);
+                String status = String.valueOf(orderModel.getValueAt(modelRow, 4));
                 isPending = "PENDING".equals(status);
+                isPaid = "PAID".equalsIgnoreCase(status.trim());
             }
             readyBtn.setEnabled(isPending);
+            billBtn.setEnabled(row != -1 && isPaid);
         });
 
         buttons.add(refreshBtn);
         buttons.add(readyBtn);
+        buttons.add(billBtn);
 
         statusLabel = new JLabel("Ready.");
         statusLabel.setFont(UITheme.SMALL);
@@ -168,7 +181,7 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
             connection.connect("REGISTER_STAFF");
             SwingUtilities.invokeLater(() -> {
                 connLabel.setText("● live");
-                connLabel.setForeground(new Color(0x69F0AE));
+                connLabel.setForeground(new Color(0xF8BBD0));
             });
         } catch (Exception ex) {
             connLabel.setText("● offline");
@@ -307,6 +320,53 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         // Send and let the broadcast update the table
         connection.send("MARK_READY:" + orderId);
         statusLabel.setText("Marking #" + orderId + " as READY...");
+    }
+
+    private void generateBill() {
+        Order selectedOrder = getSelectedOrder();
+        if (selectedOrder == null) {
+            JOptionPane.showMessageDialog(this, "Select an order first.");
+            return;
+        }
+        if (selectedOrder.getStatus() == null
+                || !"PAID".equalsIgnoreCase(selectedOrder.getStatus().trim())) {
+            JOptionPane.showMessageDialog(this,
+                    "Only paid orders can have a bill generated.",
+                    "Bill Generation Not Allowed", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            java.io.File bill = BillGenerator.generate(selectedOrder);
+            statusLabel.setText("Generated " + bill.getName());
+            if (connection == null) {
+                statusLabel.setText("Bill generated, but student is not notified (offline).");
+                return;
+            }
+            String encodedPath = Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(bill.getAbsolutePath().getBytes(StandardCharsets.UTF_8));
+            connection.send("BILL_GENERATED:" + selectedOrder.getId() + ":" + encodedPath);
+            statusLabel.setText("Generated bill and notified " + selectedOrder.getStudentName());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                    "Could not generate the bill.\n" + ex.getMessage(),
+                    "Bill Generation Failed", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private Order getSelectedOrder() {
+        int selectedRow = orderTable.getSelectedRow();
+        if (selectedRow == -1) {
+            return null;
+        }
+        int modelRow = orderTable.convertRowIndexToModel(selectedRow);
+        int orderId = ((Number) orderModel.getValueAt(modelRow, 0)).intValue();
+        for (Order order : orders) {
+            if (order.getId() == orderId) {
+                return order;
+            }
+        }
+        return null;
     }
 
     // ---------- Custom status renderer ----------
