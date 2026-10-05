@@ -303,9 +303,16 @@ STEP 2. Paste the following SQL (all at once is fine):
     CREATE DATABASE canteen_db;
     USE canteen_db;
 
+    CREATE TABLE users (
+        id INT PRIMARY KEY AUTO_INCREMENT,
+        name VARCHAR(50) NOT NULL UNIQUE,
+        email VARCHAR(254) UNIQUE,
+        password VARCHAR(255)
+    );
+
     CREATE TABLE menu (
         id INT PRIMARY KEY AUTO_INCREMENT,
-        item_name VARCHAR(50),
+        item_name VARCHAR(50) UNIQUE,
         price DECIMAL(6,2),
         available BOOLEAN DEFAULT TRUE
     );
@@ -338,6 +345,13 @@ STEP 3. Verify:
     SELECT * FROM menu;
 
   Expected: 5 rows.
+
+  Existing databases are upgraded by the application when a student account
+  is first created: the users table gains an email column if needed, the user
+  password column is enlarged for password hashes, and unique indexes are
+  added to users.name and users.email. Menu additions add a unique index on
+  menu.item_name. Existing duplicate usernames must be resolved before the
+  username index can be created.
 
 STEP 4. Exit:
 

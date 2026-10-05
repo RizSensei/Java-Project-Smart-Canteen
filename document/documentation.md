@@ -86,9 +86,20 @@ development:
 
   Database: canteen_db
 
+  Table: users
+    id          INT PK AUTO_INCREMENT
+    name        VARCHAR(50) UNIQUE
+    email       VARCHAR(254) UNIQUE (normalized Gmail address; NULL for legacy accounts)
+    password    VARCHAR(255) (PBKDF2 hash for new accounts)
+
+  Table: student_login_history (created automatically on first successful login)
+    id          BIGINT PK AUTO_INCREMENT
+    username    VARCHAR(50)
+    login_time  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
   Table: menu
     id          INT PK AUTO_INCREMENT
-    item_name   VARCHAR(50)
+    item_name   VARCHAR(50) UNIQUE
     price       DECIMAL(6,2)
     available   BOOLEAN DEFAULT TRUE
 
@@ -131,7 +142,8 @@ development:
   UITheme          - Centralized colors, fonts, shared style.
   MenuItem, Order  - Immutable POJOs.
   DBConnection     - Static factory returning a JDBC Connection.
-  MenuDAO          - getAllItems() → List<MenuItem>
+  MenuDAO          - getAllItems(), addItem(), removeItem()
+  UserDAO          - Legacy login validation and secure student account creation
   OrderDAO         - placeOrder(), getAllOrders(), markReady()
   ServerConnection - One-shot socket helper (student side).
   StudentClient    - Swing JFrame: menu table, cart, name field, buttons.
@@ -149,7 +161,11 @@ development:
 
   Client → Server:
     REGISTER_STAFF
+    CREATE_STUDENT:username:base64url-gmail:base64url-password
+    LOGIN:username:B64:base64url-password
     GET_MENU
+    ADD_ITEM:base64url-name:price
+    REMOVE_ITEM:id
     ORDER:name:items:total
     GET_ORDERS
     MARK_READY:id
@@ -157,12 +173,32 @@ development:
 
   Server → Client:
     OK:REGISTERED
+    ACCOUNT_CREATED / ACCOUNT_EXISTS
     MENU:id~name~price;...
+    ITEM_ADDED / ITEM_REMOVED / ITEM_EXISTS
+    MENU_UPDATED (broadcast to connected students after a menu change)
     ORDER_OK:id
     ORDERS:id~name~total~status;...
     OK:READY
     ERROR:message
     BYE
+
+  New student passwords are stored as PBKDF2-HMAC-SHA256 hashes with random
+  salts. New accounts require a unique Gmail address and a password of 8-128
+  characters containing a letter and a number. Existing accounts without email
+  continue to authenticate. On the first account creation the server expands
+  users.password as needed, adds users.email if missing, and adds unique indexes
+  on users.name and users.email. Existing duplicate usernames must be resolved
+  before account creation can add the username index. The first menu item
+  addition adds a unique index on menu.item_name.
+  Each successful login is recorded in student_login_history. If history
+  recording fails, the server logs the database error but still allows a
+  valid student to log in.
+
+  Menu changes are accepted only from a connection registered as staff. The
+  existing staff registration flow does not have a separate credential check.
+  Connected student clients reload the menu from the server when they receive
+  MENU_UPDATED, so additions and removals appear without signing in again.
 
   Server broadcasts (to all staff):
     NEW_ORDER:id:name:total

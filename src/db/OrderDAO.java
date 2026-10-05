@@ -116,46 +116,51 @@ public class OrderDAO {
 
         // Build a price lookup once, reuse for both branches
         java.util.Map<String, Double> priceLookup = new java.util.HashMap<>();
-        for (model.MenuItem m : MenuDAO.getAllItems()) {
-            priceLookup.put(m.getName(), m.getPrice());
+        try {
+            for (model.MenuItem m : MenuDAO.getAllItems()) {
+                priceLookup.put(m.getName(), m.getPrice());
+            }
+        } catch (SQLException e) {
+            System.out.println("Could not load menu prices for order: " + e.getMessage());
+            return -1;
+        }
+
+        java.util.Map<String, Integer> newOnes = ItemMerger.parseQuantities(newItems);
+        if (newOnes.isEmpty()) {
+            return -1;
+        }
+        double newItemsTotal = 0.0;
+        for (java.util.Map.Entry<String, Integer> item : newOnes.entrySet()) {
+            Double price = priceLookup.get(item.getKey());
+            if (price == null || item.getValue() <= 0) {
+                return -1;
+            }
+            newItemsTotal += price * item.getValue();
         }
 
         Order pending = getPendingOrderForStudent(studentName);
 
         // ---- No existing PENDING order: insert fresh with correct total ----
         if (pending == null) {
-            java.util.Map<String, Integer> newOnes = ItemMerger.parseQuantities(newItems);
-
             String cleanItems = ItemMerger.rebuild(newOnes,
-                    name -> priceLookup.getOrDefault(name, 0.0));
-
-            double computedTotal = 0.0;
-            for (java.util.Map.Entry<String, Integer> e : newOnes.entrySet()) {
-                computedTotal += priceLookup.getOrDefault(e.getKey(), 0.0)
-                        * e.getValue();
-            }
-
-            return placeOrder(studentName, cleanItems, computedTotal);
+                    priceLookup::get);
+            return placeOrder(studentName, cleanItems, newItemsTotal);
         }
 
         // ---- Merge into existing PENDING order ----
         java.util.Map<String, Integer> merged = ItemMerger.parseQuantities(pending.getItems());
-        java.util.Map<String, Integer> newOnes = ItemMerger.parseQuantities(newItems);
-
         for (java.util.Map.Entry<String, Integer> e : newOnes.entrySet()) {
             merged.merge(e.getKey(), e.getValue(), Integer::sum);
         }
 
+        java.util.Map<String, Double> mergedPrices =
+                ItemMerger.parseUnitPrices(pending.getItems());
+        mergedPrices.putAll(priceLookup);
         String mergedItems = ItemMerger.rebuild(merged,
-                name -> priceLookup.getOrDefault(name, 0.0));
-
-        double mergedTotal = 0.0;
-        for (java.util.Map.Entry<String, Integer> e : merged.entrySet()) {
-            mergedTotal += priceLookup.getOrDefault(e.getKey(), 0.0) * e.getValue();
-        }
+                name -> mergedPrices.getOrDefault(name, 0.0));
 
         boolean ok = updateOrderItemsAndTotal(pending.getId(),
-                mergedItems, mergedTotal);
+                mergedItems, pending.getTotal() + newItemsTotal);
         return ok ? pending.getId() : -1;
     }
 

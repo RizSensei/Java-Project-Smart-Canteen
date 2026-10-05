@@ -12,6 +12,10 @@ import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.sql.SQLException;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -87,15 +91,110 @@ public class CanteenServer {
                 if (parts.length < 3)
                     return "ERROR:missing name or password";
                 String loginName = parts[1].trim();
-                String loginPass = parts[2];
+                String loginPass;
+                try {
+                    loginPass = parts.length >= 4 && "B64".equals(parts[2])
+                            ? new String(Base64.getUrlDecoder().decode(parts[3]), StandardCharsets.UTF_8)
+                            : parts[2];
+                } catch (IllegalArgumentException e) {
+                    return "ERROR:invalid login request";
+                }
 
                 if (UserDAO.validate(loginName, loginPass)) {
+                    try {
+                        UserDAO.recordSuccessfulLogin(loginName);
+                    } catch (SQLException e) {
+                        System.out.println("Could not record successful login for "
+                                + loginName + ": " + e.getMessage());
+                    }
                     return "LOGIN_OK:" + loginName;
                 }
                 return "LOGIN_FAIL";
 
+            case "CREATE_STUDENT":
+                if (parts.length < 4)
+                    return "ERROR:username, Gmail address, and password are required";
+                String newUsername = parts[1].trim();
+                if (!UserDAO.isValidUsername(newUsername))
+                    return "ERROR:Username must be 3-30 characters using letters, numbers, dot, underscore, or hyphen.";
+                String newEmail;
+                try {
+                    newEmail = UserDAO.normalizeGmail(
+                            new String(Base64.getUrlDecoder().decode(parts[2]), StandardCharsets.UTF_8));
+                } catch (IllegalArgumentException e) {
+                    return "ERROR:Enter a valid Gmail address.";
+                }
+                if (newEmail == null)
+                    return "ERROR:Enter a valid Gmail address.";
+                try {
+                    char[] newPassword = new String(
+                            Base64.getUrlDecoder().decode(parts[3]), StandardCharsets.UTF_8).toCharArray();
+                    if (!UserDAO.isValidPassword(newPassword)) {
+                        java.util.Arrays.fill(newPassword, '\0');
+                        return "ERROR:Password must be 8-128 characters and include a letter and a number.";
+                    }
+                    return UserDAO.createAccount(newUsername, newEmail, newPassword)
+                            ? "ACCOUNT_CREATED"
+                            : "ACCOUNT_EXISTS";
+                } catch (IllegalArgumentException e) {
+                    return "ERROR:invalid account request";
+                } catch (IllegalStateException e) {
+                    System.out.println("Could not hash student password: " + e.getMessage());
+                    return "ERROR:Could not securely create the student account.";
+                } catch (SQLException e) {
+                    System.out.println("Student account creation failed: " + e.getMessage());
+                    return "ERROR:Could not save the student account. Check the users table schema.";
+                }
+
             case "GET_MENU":
-                return "MENU:" + serializeMenu();
+                try {
+                    return "MENU:" + serializeMenu();
+                } catch (SQLException e) {
+                    System.out.println("Could not load menu: " + e.getMessage());
+                    return "ERROR:Could not load the menu from the database.";
+                }
+
+            case "ADD_ITEM": {
+                if (!staffClients.contains(out))
+                    return "ERROR:only kitchen staff can manage menu items";
+                if (parts.length < 3)
+                    return "ERROR:missing item name or price";
+                try {
+                    String itemName = new String(
+                            Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
+                    BigDecimal price = new BigDecimal(parts[2]);
+                    if (!MenuDAO.addItem(itemName, price))
+                        return "ITEM_EXISTS";
+                    broadcastToStudents("MENU_UPDATED");
+                    return "ITEM_ADDED";
+                } catch (IllegalArgumentException e) {
+                    return "ERROR:Enter a valid item name and positive price.";
+                } catch (SQLException e) {
+                    System.out.println("Could not add menu item: " + e.getMessage());
+                    return "ERROR:Could not save the menu item. Check the menu table schema.";
+                }
+            }
+
+            case "REMOVE_ITEM": {
+                if (!staffClients.contains(out))
+                    return "ERROR:only kitchen staff can manage menu items";
+                if (parts.length < 2)
+                    return "ERROR:missing menu item id";
+                try {
+                    int itemId = Integer.parseInt(parts[1]);
+                    if (itemId <= 0)
+                        return "ERROR:invalid menu item id";
+                    if (!MenuDAO.removeItem(itemId))
+                        return "ERROR:menu item not found";
+                    broadcastToStudents("MENU_UPDATED");
+                    return "ITEM_REMOVED";
+                } catch (NumberFormatException e) {
+                    return "ERROR:invalid menu item id";
+                } catch (SQLException e) {
+                    System.out.println("Could not remove menu item: " + e.getMessage());
+                    return "ERROR:Could not delete the menu item from the database.";
+                }
+            }
 
             case "ORDER": {
                 if (parts.length < 4)
@@ -200,7 +299,7 @@ public class CanteenServer {
         }
     }
 
-    private static String serializeMenu() {
+    private static String serializeMenu() throws SQLException {
         StringBuilder sb = new StringBuilder();
         for (MenuItem m : MenuDAO.getAllItems()) {
             sb.append(m.getId()).append("~")

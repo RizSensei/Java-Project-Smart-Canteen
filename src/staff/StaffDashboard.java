@@ -12,6 +12,7 @@ import javax.swing.table.DefaultTableModel;
 import billing.BillGenerator;
 
 import java.awt.*;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -27,6 +28,19 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
 
     private ClientConnection connection;
     private final List<Order> orders = new ArrayList<>();
+    private final List<model.MenuItem> menuItems = new ArrayList<>();
+    private DefaultListModel<model.MenuItem> menuListModel;
+    private JList<model.MenuItem> menuList;
+    private JDialog menuDialog;
+    private JLabel menuMessageLabel;
+    private JLabel itemNameErrorLabel;
+    private JLabel itemPriceErrorLabel;
+    private JTextField itemNameField;
+    private JTextField itemPriceField;
+    private JButton menuSubmitButton;
+    private JButton menuCancelButton;
+    private boolean menuMutationPending;
+    private boolean addItemDialogOpen;
 
     public StaffDashboard() {
         setTitle("Smart Canteen - Staff");
@@ -45,6 +59,7 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         // Connect AFTER the UI is visible so messages can update the table
         connectToServer();
         refreshOrders(); // initial load
+        refreshMenu();
     }
 
     // ---------- UI ----------
@@ -64,7 +79,7 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         connLabel.setFont(UITheme.BODY_B);
         connLabel.setForeground(Color.YELLOW);
 
-        countLabel = new JLabel("0 orders");
+        countLabel = new JLabel("0 active orders");
         countLabel.setFont(UITheme.BODY_B);
         countLabel.setForeground(Color.WHITE);
 
@@ -119,14 +134,20 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         footer.setBackground(UITheme.BG);
         footer.setBorder(new EmptyBorder(10, 20, 15, 20));
 
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        buttons.setOpaque(false);
+        JPanel orderButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        orderButtons.setOpaque(false);
+        JPanel menuButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        menuButtons.setOpaque(false);
 
         JButton refreshBtn = styledButton("🔄 Refresh", UITheme.PRIMARY_DARK);
         JButton readyBtn = styledButton("✅ Mark Ready", UITheme.PRIMARY);
         JButton billBtn = styledButton("Generate Bill", UITheme.PRIMARY_DARK);
+        JButton addItemBtn = styledButton("Add Item", UITheme.PRIMARY);
+        JButton removeItemBtn = styledButton("Remove Item", UITheme.DANGER);
 
         refreshBtn.addActionListener(e -> refreshOrders());
+        addItemBtn.addActionListener(e -> showMenuManager(true));
+        removeItemBtn.addActionListener(e -> showMenuManager(false));
         readyBtn.setEnabled(false);
         readyBtn.addActionListener(e -> markReady());
         billBtn.setEnabled(false);
@@ -149,16 +170,20 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
             billBtn.setEnabled(row != -1 && isPaid);
         });
 
-        buttons.add(refreshBtn);
-        buttons.add(readyBtn);
-        buttons.add(billBtn);
+        orderButtons.add(refreshBtn);
+        orderButtons.add(readyBtn);
+        orderButtons.add(billBtn);
+        menuButtons.add(addItemBtn);
+        menuButtons.add(removeItemBtn);
 
         statusLabel = new JLabel("Ready.");
         statusLabel.setFont(UITheme.SMALL);
         statusLabel.setForeground(UITheme.TEXT_MUTED);
 
-        footer.add(buttons, BorderLayout.WEST);
-        footer.add(statusLabel, BorderLayout.EAST);
+        footer.add(orderButtons, BorderLayout.WEST);
+        statusLabel.setHorizontalAlignment(SwingConstants.CENTER);
+        footer.add(statusLabel, BorderLayout.CENTER);
+        footer.add(menuButtons, BorderLayout.EAST);
         return footer;
     }
 
@@ -254,8 +279,38 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
             orders.addAll(parseOrders(message));
             rebuildTable();
             statusLabel.setText("Loaded " + orders.size() + " orders.");
+        } else if (message.startsWith("MENU:")) {
+            updateMenuItems(parseMenu(message));
+        } else if ("ITEM_ADDED".equals(message)) {
+            menuMutationPending = false;
+            setMenuMessage("Item added successfully.", new Color(0x2E7D32));
+            if (itemNameField != null) {
+                itemNameField.setText("");
+                itemPriceField.setText("");
+                itemNameErrorLabel.setText(" ");
+                itemPriceErrorLabel.setText(" ");
+            }
+            enableMenuActions();
+            refreshMenu();
+            statusLabel.setText("Menu item added.");
+        } else if ("ITEM_EXISTS".equals(message)) {
+            menuMutationPending = false;
+            setMenuMessage("An item with that name already exists.", UITheme.DANGER);
+            enableMenuActions();
+        } else if ("ITEM_REMOVED".equals(message)) {
+            menuMutationPending = false;
+            setMenuMessage("Item removed successfully.", new Color(0x2E7D32));
+            enableMenuActions();
+            refreshMenu();
+            statusLabel.setText("Menu item removed.");
         } else if (message.startsWith("ERROR:")) {
-            statusLabel.setText("Server error: " + message.substring(6));
+            String error = message.substring(6);
+            statusLabel.setText("Server error: " + error);
+            if (menuMutationPending || menuDialog != null && menuDialog.isVisible()) {
+                menuMutationPending = false;
+                setMenuMessage(error, UITheme.DANGER);
+                enableMenuActions();
+            }
         }
         // Ignore OK:REGISTERED and OK:READY — those are acks
     }
@@ -264,9 +319,259 @@ public class StaffDashboard extends JFrame implements ClientConnection.MessageLi
         if (connection == null)
             return;
         connection.send("GET_ORDERS");
+        statusLabel.setText("Refreshing orders; paid and cancelled orders will be hidden.");
+    }
+
+    private void refreshMenu() {
+        if (connection != null) {
+            connection.send("GET_MENU");
+        }
+    }
+
+    private void showMenuManager(boolean adding) {
+        if (menuDialog != null && menuDialog.isDisplayable()) {
+            menuDialog.toFront();
+            return;
+        }
+        if (connection == null) {
+            JOptionPane.showMessageDialog(this, "Not connected to the server.",
+                    "Menu Unavailable", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        addItemDialogOpen = adding;
+        menuDialog = new JDialog(this, adding ? "Add Item" : "Remove Item", false);
+        menuDialog.setDefaultCloseOperation(JDialog.DISPOSE_ON_CLOSE);
+        menuDialog.setLayout(new BorderLayout(8, 8));
+
+        menuListModel = new DefaultListModel<>();
+        menuList = new JList<>(menuListModel);
+        menuList.setFont(UITheme.BODY);
+        menuList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        menuList.setSelectionBackground(UITheme.PRIMARY);
+        menuList.setSelectionForeground(Color.WHITE);
+        menuList.setCellRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(
+                    JList<?> list, Object value, int index, boolean selected, boolean focused) {
+                JLabel label = (JLabel) super.getListCellRendererComponent(
+                        list, value, index, selected, focused);
+                if (value instanceof model.MenuItem) {
+                    label.setText((index + 1) + ".  " + value);
+                }
+                return label;
+            }
+        });
+        JScrollPane itemScroll = new JScrollPane(menuList);
+        itemScroll.setBorder(BorderFactory.createTitledBorder(
+                BorderFactory.createLineBorder(UITheme.BORDER),
+                "Current Menu", 0, 0, UITheme.BODY_B, UITheme.TEXT));
+        menuDialog.add(itemScroll, BorderLayout.CENTER);
+
+        if (adding) {
+            JPanel fields = new JPanel(new GridBagLayout());
+            fields.setBackground(UITheme.BG);
+            fields.setBorder(new EmptyBorder(12, 16, 4, 16));
+            GridBagConstraints gbc = new GridBagConstraints();
+            gbc.gridx = 0;
+            gbc.weightx = 1;
+            gbc.fill = GridBagConstraints.HORIZONTAL;
+            gbc.insets = new Insets(3, 3, 3, 3);
+            itemNameField = new JTextField(22);
+            itemPriceField = new JTextField(22);
+            itemNameErrorLabel = menuErrorLabel();
+            itemPriceErrorLabel = menuErrorLabel();
+            addMenuField(fields, gbc, 0, "Item name", itemNameField, itemNameErrorLabel);
+            addMenuField(fields, gbc, 3, "Price (Rs.)", itemPriceField, itemPriceErrorLabel);
+            menuDialog.add(fields, BorderLayout.NORTH);
+        } else {
+            itemNameField = null;
+            itemPriceField = null;
+            itemNameErrorLabel = null;
+            itemPriceErrorLabel = null;
+            menuList.addListSelectionListener(e -> {
+                if (!e.getValueIsAdjusting() && menuSubmitButton != null) {
+                    menuSubmitButton.setEnabled(menuList.getSelectedValue() != null);
+                }
+            });
+        }
+
+        menuMessageLabel = new JLabel(" ");
+        menuMessageLabel.setFont(UITheme.SMALL);
+        menuMessageLabel.setForeground(UITheme.TEXT_MUTED);
+        menuSubmitButton = styledButton(adding ? "Add Item" : "Remove Item",
+                adding ? UITheme.PRIMARY : UITheme.DANGER);
+        menuSubmitButton.setEnabled(adding || menuList.getSelectedValue() != null);
+        menuCancelButton = new JButton("Cancel");
+        menuCancelButton.setFont(UITheme.BODY);
+
+        JPanel actions = new JPanel(new BorderLayout(8, 4));
+        actions.setOpaque(false);
+        actions.setBorder(new EmptyBorder(5, 12, 12, 12));
+        JPanel actionButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        actionButtons.setOpaque(false);
+        actionButtons.add(menuCancelButton);
+        actionButtons.add(menuSubmitButton);
+        actions.add(menuMessageLabel, BorderLayout.CENTER);
+        actions.add(actionButtons, BorderLayout.SOUTH);
+        menuDialog.add(actions, BorderLayout.SOUTH);
+
+        menuCancelButton.addActionListener(e -> menuDialog.dispose());
+        menuSubmitButton.addActionListener(e -> {
+            if (addItemDialogOpen) {
+                submitNewMenuItem();
+            } else {
+                removeSelectedMenuItem();
+            }
+        });
+
+        menuDialog.setSize(480, adding ? 540 : 440);
+        menuDialog.setMinimumSize(new Dimension(400, 380));
+        menuDialog.setLocationRelativeTo(this);
+        menuDialog.setVisible(true);
+        refreshMenu();
+    }
+
+    private void submitNewMenuItem() {
+        String name = itemNameField.getText().trim();
+        String priceText = itemPriceField.getText().trim();
+        itemNameErrorLabel.setText(" ");
+        itemPriceErrorLabel.setText(" ");
+
+        boolean valid = true;
+        if (name.isEmpty()) {
+            itemNameErrorLabel.setText("Item name cannot be empty.");
+            valid = false;
+        } else if (!name.matches("[A-Za-z0-9][A-Za-z0-9 '&().-]{0,49}")) {
+            itemNameErrorLabel.setText("Use up to 50 letters, numbers, spaces, or basic punctuation.");
+            valid = false;
+        }
+
+        BigDecimal price = null;
+        if (priceText.isEmpty()) {
+            itemPriceErrorLabel.setText("Price cannot be empty.");
+            valid = false;
+        } else if (!priceText.matches("[0-9]+(?:\\.[0-9]{1,2})?")) {
+            itemPriceErrorLabel.setText("Enter a positive amount with up to 2 decimal places.");
+            valid = false;
+        } else {
+            price = new BigDecimal(priceText);
+            if (price.signum() <= 0 || price.compareTo(new BigDecimal("9999.99")) > 0) {
+                itemPriceErrorLabel.setText("Price must be greater than 0 and no more than 9999.99.");
+                valid = false;
+            }
+        }
+        if (!valid) {
+            return;
+        }
+        if (connection == null) {
+            setMenuMessage("Not connected to the server.", UITheme.DANGER);
+            return;
+        }
+
+        String encodedName = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(name.getBytes(StandardCharsets.UTF_8));
+        menuMutationPending = true;
+        menuSubmitButton.setEnabled(false);
+        menuCancelButton.setEnabled(false);
+        setMenuMessage("Saving item...", UITheme.TEXT_MUTED);
+        connection.send("ADD_ITEM:" + encodedName + ":" + price.stripTrailingZeros().toPlainString());
+    }
+
+    private void removeSelectedMenuItem() {
+        model.MenuItem selected = menuList.getSelectedValue();
+        if (selected == null) {
+            setMenuMessage("Select a menu item first.", UITheme.DANGER);
+            return;
+        }
+        int confirmation = JOptionPane.showConfirmDialog(menuDialog,
+                "Permanently remove \"" + selected.getName() + "\" from the menu?",
+                "Confirm Item Removal", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (confirmation != JOptionPane.YES_OPTION) {
+            return;
+        }
+        if (connection == null) {
+            setMenuMessage("Not connected to the server.", UITheme.DANGER);
+            return;
+        }
+
+        menuMutationPending = true;
+        menuSubmitButton.setEnabled(false);
+        menuCancelButton.setEnabled(false);
+        setMenuMessage("Removing item...", UITheme.TEXT_MUTED);
+        connection.send("REMOVE_ITEM:" + selected.getId());
+    }
+
+    private void addMenuField(JPanel panel, GridBagConstraints gbc, int row, String labelText,
+            JTextField field, JLabel errorLabel) {
+        JLabel label = new JLabel(labelText);
+        label.setFont(UITheme.BODY_B);
+        label.setForeground(UITheme.TEXT);
+        gbc.gridy = row;
+        panel.add(label, gbc);
+        field.setFont(UITheme.BODY);
+        gbc.gridy = row + 1;
+        panel.add(field, gbc);
+        gbc.gridy = row + 2;
+        panel.add(errorLabel, gbc);
+    }
+
+    private JLabel menuErrorLabel() {
+        JLabel label = new JLabel(" ");
+        label.setFont(UITheme.SMALL);
+        label.setForeground(UITheme.DANGER);
+        return label;
+    }
+
+    private void updateMenuItems(List<model.MenuItem> items) {
+        menuItems.clear();
+        menuItems.addAll(items);
+        if (menuListModel != null) {
+            menuListModel.clear();
+            for (model.MenuItem item : menuItems) {
+                menuListModel.addElement(item);
+            }
+        }
+    }
+
+    private List<model.MenuItem> parseMenu(String response) {
+        List<model.MenuItem> items = new ArrayList<>();
+        String body = response.substring(5);
+        if (body.isEmpty()) {
+            return items;
+        }
+        for (String entry : body.split(";")) {
+            String[] fields = entry.split("~", 3);
+            if (fields.length == 3) {
+                try {
+                    items.add(new model.MenuItem(
+                            Integer.parseInt(fields[0]),
+                            fields[1],
+                            Double.parseDouble(fields[2])));
+                } catch (NumberFormatException e) {
+                    System.out.println("Skipping invalid menu entry: " + entry);
+                }
+            }
+        }
+        return items;
+    }
+
+    private void setMenuMessage(String message, Color color) {
+        if (menuMessageLabel != null && menuDialog != null && menuDialog.isDisplayable()) {
+            menuMessageLabel.setForeground(color);
+            menuMessageLabel.setText(message);
+        }
+    }
+
+    private void enableMenuActions() {
+        if (menuSubmitButton != null && menuDialog != null && menuDialog.isDisplayable()) {
+            menuSubmitButton.setEnabled(addItemDialogOpen || menuList.getSelectedValue() != null);
+            menuCancelButton.setEnabled(true);
+        }
     }
 
     private void rebuildTable() {
+        orderTable.clearSelection();
         orderModel.setRowCount(0);
         for (Order o : orders) {
             orderModel.addRow(new Object[] {

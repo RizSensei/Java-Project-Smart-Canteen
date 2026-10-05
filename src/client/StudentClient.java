@@ -91,7 +91,7 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
     // ---------- CENTER ----------
     private JSplitPane buildCenter() {
         // Menu table
-        menuModel = new DefaultTableModel(new String[] { "ID", "Item", "Price (Rs.)" }, 0) {
+        menuModel = new DefaultTableModel(new String[] { "S.N.", "Item", "Price (Rs.)" }, 0) {
             @Override
             public boolean isCellEditable(int r, int c) {
                 return false;
@@ -299,19 +299,22 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
         try {
             String response = ServerConnection.send("GET_MENU"); // "MENU:id~name~price;..."
             menuItems = parseMenu(response);
-
-            menuModel.setRowCount(0);
-            for (MenuItem item : menuItems) {
-                menuModel.addRow(new Object[] {
-                        item.getId(), item.getName(),
-                        String.format("%.2f", item.getPrice())
-                });
-            }
+            updateMenuTable();
             statusLabel.setText("Loaded " + menuItems.size() + " items from server.");
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this,
                     "Cannot reach server. Is CanteenServer running?\n" + ex.getMessage());
             statusLabel.setText("Server offline.");
+        }
+    }
+
+    private void updateMenuTable() {
+        menuModel.setRowCount(0);
+        for (int i = 0; i < menuItems.size(); i++) {
+            MenuItem item = menuItems.get(i);
+            menuModel.addRow(new Object[] {
+                    i + 1, item.getName(), String.format("%.2f", item.getPrice())
+            });
         }
     }
 
@@ -506,7 +509,37 @@ public class StudentClient extends JFrame implements net.ClientConnection.Messag
             }
         } else if (message.startsWith("BILL_GENERATED:")) {
             showGeneratedBill(message);
+        } else if ("MENU_UPDATED".equals(message)) {
+            refreshMenuFromLiveUpdate();
         }
+    }
+
+    private void refreshMenuFromLiveUpdate() {
+        Thread refreshThread = new Thread(() -> {
+            try {
+                String response = ServerConnection.send("GET_MENU");
+                if (response == null || !response.startsWith("MENU:")) {
+                    throw new IllegalStateException("Server returned an invalid menu response.");
+                }
+                List<MenuItem> refreshedItems = parseMenu(response);
+                SwingUtilities.invokeLater(() -> {
+                    if (!isDisplayable()) {
+                        return;
+                    }
+                    menuItems = refreshedItems;
+                    updateMenuTable();
+                    statusLabel.setText("Menu updated — " + menuItems.size() + " items available.");
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> {
+                    if (isDisplayable()) {
+                        statusLabel.setText("Could not update menu: " + ex.getMessage());
+                    }
+                });
+            }
+        }, "student-menu-refresh");
+        refreshThread.setDaemon(true);
+        refreshThread.start();
     }
 
     private void showGeneratedBill(String message) {

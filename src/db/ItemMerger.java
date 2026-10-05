@@ -30,6 +30,30 @@ public class ItemMerger {
         return map;
     }
 
+    /** Parse existing line totals into unit prices for items that may leave the menu. */
+    public static Map<String, Double> parseUnitPrices(String items) {
+        Map<String, Double> prices = new LinkedHashMap<>();
+        if (items == null || items.isEmpty()) return prices;
+
+        for (String entry : items.split("\\s*,\\s*")) {
+            int equalsIndex = entry.indexOf('=');
+            int quantityIndex = entry.lastIndexOf(" x", equalsIndex);
+            if (equalsIndex == -1 || quantityIndex == -1) continue;
+
+            String name = entry.substring(0, quantityIndex).trim();
+            try {
+                int quantity = Integer.parseInt(
+                        entry.substring(quantityIndex + 2, equalsIndex).trim());
+                String totalText = entry.substring(equalsIndex + 1).replace("Rs.", "").trim();
+                double total = Double.parseDouble(totalText);
+                if (quantity > 0) {
+                    prices.put(name, total / quantity);
+                }
+            } catch (NumberFormatException ignored) {}
+        }
+        return prices;
+    }
+
     /** Given a map of name -> qty and a price lookup function,
         rebuild the items string with line totals. */
     public static String rebuild(Map<String, Integer> quantities,
