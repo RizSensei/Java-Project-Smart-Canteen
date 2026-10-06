@@ -246,8 +246,8 @@ public class LoginScreen extends JFrame {
 
         cancelButton.addActionListener(e -> dialog.dispose());
         createButton.addActionListener(e -> {
-            String username = usernameField.getText().trim();
-            String email = emailField.getText().trim();
+            String username = db.UserDAO.normalizeUsername(usernameField.getText());
+            String email = emailField.getText();
             char[] passwordChars = newPasswordField.getPassword();
             char[] confirmation = confirmPasswordField.getPassword();
 
@@ -257,21 +257,17 @@ public class LoginScreen extends JFrame {
             confirmError.setText(" ");
             formMessage.setText(" ");
             boolean valid = true;
-            if (username.isEmpty()) {
+            if (usernameField.getText().trim().isEmpty()) {
                 usernameError.setText("Username cannot be empty.");
                 valid = false;
-            } else if (!username.matches("[A-Za-z0-9][A-Za-z0-9._-]{2,29}")) {
+            } else if (username == null) {
                 usernameError.setText("Use 3-30 letters, numbers, dots, underscores, or hyphens.");
                 valid = false;
             }
             if (email.isEmpty()) {
                 emailError.setText("Gmail address cannot be empty.");
                 valid = false;
-            } else if (!email.matches("(?i)[a-z0-9](?:[a-z0-9.]*[a-z0-9])?@gmail\\.com")
-                    || email.length() > 254
-                    || email.substring(0, email.indexOf('@')).length() < 6
-                    || email.substring(0, email.indexOf('@')).length() > 30
-                    || email.substring(0, email.indexOf('@')).contains("..")) {
+            } else if (db.UserDAO.normalizeGmail(email) == null) {
                 emailError.setText("Enter a valid Gmail address (for example, name@gmail.com).");
                 valid = false;
             }
@@ -297,13 +293,17 @@ public class LoginScreen extends JFrame {
             }
 
             String password = new String(passwordChars);
+            String confirmationText = new String(confirmation);
             Arrays.fill(passwordChars, '\0');
             Arrays.fill(confirmation, '\0');
             String encodedPassword = Base64.getUrlEncoder().withoutPadding()
                     .encodeToString(password.getBytes(StandardCharsets.UTF_8));
-            String encodedEmail = Base64.getUrlEncoder().withoutPadding()
-                    .encodeToString(email.toLowerCase(java.util.Locale.ROOT)
-                            .getBytes(StandardCharsets.UTF_8));
+            String encodedConfirmation = Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(confirmationText.getBytes(StandardCharsets.UTF_8));
+            String encodedEmail = Base64.getUrlEncoder().withoutPadding().encodeToString(
+                    db.UserDAO.normalizeGmail(email).getBytes(StandardCharsets.UTF_8));
+            password = null;
+            confirmationText = null;
             createButton.setEnabled(false);
             cancelButton.setEnabled(false);
             formMessage.setForeground(UITheme.TEXT_MUTED);
@@ -313,23 +313,32 @@ public class LoginScreen extends JFrame {
                 String response;
                 try {
                     response = ServerConnection.send(
-                            "CREATE_STUDENT:" + username + ":" + encodedEmail + ":" + encodedPassword);
+                            "CREATE_STUDENT:" + username + ":" + encodedEmail + ":"
+                                    + encodedPassword + ":" + encodedConfirmation);
                 } catch (Exception ex) {
                     response = "ERROR:" + ex.getMessage();
                 }
                 String result = response;
                 SwingUtilities.invokeLater(() -> {
                     if ("ACCOUNT_CREATED".equals(result)) {
+                        usernameField.setText("");
+                        emailField.setText("");
+                        newPasswordField.setText("");
+                        confirmPasswordField.setText("");
                         nameField.setText(username);
                         passwordField.setText("");
                         messageLabel.setForeground(new Color(0x2E7D32));
-                        messageLabel.setText("Account created. You can now log in.");
+                        messageLabel.setText("Student account created successfully.");
                         dialog.dispose();
                     } else {
                         createButton.setEnabled(true);
                         cancelButton.setEnabled(true);
-                        if ("ACCOUNT_EXISTS".equals(result)) {
-                            usernameError.setText("Username or Gmail address is already registered.");
+                        if ("USERNAME_TAKEN".equals(result)) {
+                            usernameError.setText(
+                                    "This username is already taken. Please choose another username.");
+                        } else if ("EMAIL_TAKEN".equals(result)) {
+                            emailError.setText(
+                                    "This Gmail is already registered. Please use a different Gmail address.");
                         } else {
                             formMessage.setForeground(UITheme.DANGER);
                             formMessage.setText(result != null && result.startsWith("ERROR:")

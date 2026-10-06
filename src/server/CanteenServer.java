@@ -67,7 +67,7 @@ public class CanteenServer {
 
     private static String processMessage(String msg, PrintWriter out) {
         // Format: COMMAND:arg1:arg2...
-        String[] parts = msg.split(":", 4);
+        String[] parts = msg.split(":", 5);
         String cmd = parts[0];
 
         switch (cmd) {
@@ -112,10 +112,10 @@ public class CanteenServer {
                 return "LOGIN_FAIL";
 
             case "CREATE_STUDENT":
-                if (parts.length < 4)
-                    return "ERROR:username, Gmail address, and password are required";
-                String newUsername = parts[1].trim();
-                if (!UserDAO.isValidUsername(newUsername))
+                if (parts.length < 5)
+                    return "ERROR:Username, Gmail address, password, and confirmation are required.";
+                String newUsername = UserDAO.normalizeUsername(parts[1]);
+                if (newUsername == null)
                     return "ERROR:Username must be 3-30 characters using letters, numbers, dot, underscore, or hyphen.";
                 String newEmail;
                 try {
@@ -126,16 +126,31 @@ public class CanteenServer {
                 }
                 if (newEmail == null)
                     return "ERROR:Enter a valid Gmail address.";
+                char[] newPassword = null;
+                char[] confirmation = null;
                 try {
-                    char[] newPassword = new String(
+                    newPassword = new String(
                             Base64.getUrlDecoder().decode(parts[3]), StandardCharsets.UTF_8).toCharArray();
+                    confirmation = new String(
+                            Base64.getUrlDecoder().decode(parts[4]), StandardCharsets.UTF_8).toCharArray();
+                    if (!java.util.Arrays.equals(newPassword, confirmation)) {
+                        return "ERROR:Passwords do not match.";
+                    }
                     if (!UserDAO.isValidPassword(newPassword)) {
-                        java.util.Arrays.fill(newPassword, '\0');
                         return "ERROR:Password must be 8-128 characters and include a letter and a number.";
                     }
-                    return UserDAO.createAccount(newUsername, newEmail, newPassword)
-                            ? "ACCOUNT_CREATED"
-                            : "ACCOUNT_EXISTS";
+                    UserDAO.AccountCreationResult result =
+                            UserDAO.createAccount(newUsername, newEmail, newPassword);
+                    switch (result) {
+                        case CREATED:
+                            return "ACCOUNT_CREATED";
+                        case USERNAME_TAKEN:
+                            return "USERNAME_TAKEN";
+                        case EMAIL_TAKEN:
+                            return "EMAIL_TAKEN";
+                        default:
+                            throw new IllegalStateException("Unexpected account creation result.");
+                    }
                 } catch (IllegalArgumentException e) {
                     return "ERROR:invalid account request";
                 } catch (IllegalStateException e) {
@@ -144,6 +159,13 @@ public class CanteenServer {
                 } catch (SQLException e) {
                     System.out.println("Student account creation failed: " + e.getMessage());
                     return "ERROR:Could not save the student account. Check the users table schema.";
+                } finally {
+                    if (newPassword != null) {
+                        java.util.Arrays.fill(newPassword, '\0');
+                    }
+                    if (confirmation != null) {
+                        java.util.Arrays.fill(confirmation, '\0');
+                    }
                 }
 
             case "GET_MENU":

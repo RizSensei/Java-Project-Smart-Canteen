@@ -17,6 +17,12 @@ import javax.crypto.spec.PBEKeySpec;
 
 public class UserDAO {
 
+    public enum AccountCreationResult {
+        CREATED,
+        USERNAME_TAKEN,
+        EMAIL_TAKEN
+    }
+
     private static final String HASH_PREFIX = "PBKDF2$";
     private static final int HASH_ITERATIONS = 600_000;
     private static final int SALT_BYTES = 16;
@@ -30,7 +36,7 @@ public class UserDAO {
      * Legacy plaintext rows remain valid for backwards compatibility.
      */
     public static boolean validate(String name, String password) {
-        String sql = "SELECT password FROM users WHERE name = ? LIMIT 1";
+        String sql = "SELECT password FROM users WHERE LOWER(name) = LOWER(?) LIMIT 1";
 
         try (Connection conn = DBConnection.getConnection();
                 PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -56,35 +62,66 @@ public class UserDAO {
         }
     }
 
-    /**
-     * Creates a new student login. Returns false if the username already exists.
-     */
-    public static boolean createAccount(String name, String email, char[] password) throws SQLException {
+    public static AccountCreationResult createAccount(String name, String email, char[] password)
+            throws SQLException {
+        String normalizedName = normalizeUsername(name);
         String normalizedEmail = normalizeGmail(email);
-        if (!isValidUsername(name) || normalizedEmail == null
-                || !isValidPassword(password)) {
-            throw new IllegalArgumentException("Invalid username, Gmail address, or password.");
-        }
-
         try {
+            if (normalizedName == null || normalizedEmail == null || !isValidPassword(password)) {
+                throw new IllegalArgumentException("Invalid username, Gmail address, or password.");
+            }
             ensureAccountSchema();
-            String encodedPassword = hashPassword(password);
-            String sql = "INSERT INTO users (name, email, password) VALUES (?, ?, ?)";
-            try (Connection conn = DBConnection.getConnection();
-                    PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, name);
-                ps.setString(2, normalizedEmail);
-                ps.setString(3, encodedPassword);
-                return ps.executeUpdate() == 1;
-            } catch (SQLException e) {
-                if (e.getErrorCode() == 1062 || "23505".equals(e.getSQLState())) {
-                    return false;
+            try (Connection conn = DBConnection.getConnection()) {
+                if (accountExists(conn, "name", normalizedName)) {
+                    return AccountCreationResult.USERNAME_TAKEN;
                 }
-                throw e;
+                if (accountExists(conn, "email", normalizedEmail)) {
+                    return AccountCreationResult.EMAIL_TAKEN;
+                }
+
+                String encodedPassword = hashPassword(password);
+                String sql = "INSERT INTO users (name, email, password) VALUES (?, ?, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    ps.setString(1, normalizedName);
+                    ps.setString(2, normalizedEmail);
+                    ps.setString(3, encodedPassword);
+                    ps.executeUpdate();
+                    return AccountCreationResult.CREATED;
+                } catch (SQLException e) {
+                    if (e.getErrorCode() == 1062 || "23505".equals(e.getSQLState())) {
+                        if (accountExists(conn, "name", normalizedName)) {
+                            return AccountCreationResult.USERNAME_TAKEN;
+                        }
+                        if (accountExists(conn, "email", normalizedEmail)) {
+                            return AccountCreationResult.EMAIL_TAKEN;
+                        }
+                    }
+                    throw e;
+                }
             }
         } finally {
-            Arrays.fill(password, '\0');
+            if (password != null) {
+                Arrays.fill(password, '\0');
+            }
         }
+    }
+
+    private static boolean accountExists(Connection conn, String column, String value) throws SQLException {
+        String sql = "SELECT 1 FROM users WHERE LOWER(" + column + ") = LOWER(?) LIMIT 1";
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, value);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    public static String normalizeUsername(String name) {
+        if (name == null) {
+            return null;
+        }
+        String normalized = name.trim();
+        return isValidUsername(normalized) ? normalized : null;
     }
 
     public static boolean isValidUsername(String name) {
@@ -105,16 +142,13 @@ public class UserDAO {
     }
 
     public static String normalizeGmail(String email) {
-        if (email == null) {
+        if (email == null || email.length() > 254
+                || !email.matches("(?i)[a-z0-9](?:[a-z0-9.]*[a-z0-9])?@gmail\\.com")) {
             return null;
         }
-        String normalized = email.trim().toLowerCase(java.util.Locale.ROOT);
-        if (normalized.length() > 254 || !normalized.endsWith("@gmail.com")) {
-            return null;
-        }
+        String normalized = email.toLowerCase(java.util.Locale.ROOT);
         String localPart = normalized.substring(0, normalized.length() - "@gmail.com".length());
         if (localPart.length() < 6 || localPart.length() > 30
-                || !localPart.matches("[a-z0-9](?:[a-z0-9.]*[a-z0-9])?")
                 || localPart.contains("..")) {
             return null;
         }
@@ -179,6 +213,18 @@ public class UserDAO {
                     statement.execute("ALTER TABLE users ADD COLUMN email VARCHAR(254) NULL");
                 }
             }
+            if (!hasColumn(metadata, conn.getCatalog(), "users", "name_normalized")) {
+                try (Statement statement = conn.createStatement()) {
+                    statement.execute("ALTER TABLE users ADD COLUMN name_normalized "
+                            + "VARCHAR(50) GENERATED ALWAYS AS (LOWER(name)) STORED");
+                }
+            }
+            if (!hasColumn(metadata, conn.getCatalog(), "users", "email_normalized")) {
+                try (Statement statement = conn.createStatement()) {
+                    statement.execute("ALTER TABLE users ADD COLUMN email_normalized "
+                            + "VARCHAR(254) GENERATED ALWAYS AS (LOWER(email)) STORED");
+                }
+            }
             if (!hasUniqueSingleColumnIndex(metadata, conn.getCatalog(), "users", "name")) {
                 try (Statement statement = conn.createStatement()) {
                     statement.execute("CREATE UNIQUE INDEX uq_users_name ON users (name)");
@@ -189,8 +235,30 @@ public class UserDAO {
                     statement.execute("CREATE UNIQUE INDEX uq_users_email ON users (email)");
                 }
             }
+            if (!hasUniqueSingleColumnIndex(metadata, conn.getCatalog(), "users", "name_normalized")) {
+                try (Statement statement = conn.createStatement()) {
+                    statement.execute("CREATE UNIQUE INDEX uq_users_name_ci ON users (name_normalized)");
+                }
+            }
+            if (!hasUniqueSingleColumnIndex(metadata, conn.getCatalog(), "users", "email_normalized")) {
+                try (Statement statement = conn.createStatement()) {
+                    statement.execute("CREATE UNIQUE INDEX uq_users_email_ci ON users (email_normalized)");
+                }
+            }
             accountSchemaReady = true;
         }
+    }
+
+    private static boolean hasColumn(
+            DatabaseMetaData metadata, String catalog, String table, String columnName) throws SQLException {
+        try (ResultSet columns = metadata.getColumns(catalog, null, table, null)) {
+            while (columns.next()) {
+                if (columnName.equalsIgnoreCase(columns.getString("COLUMN_NAME"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean hasUniqueSingleColumnIndex(

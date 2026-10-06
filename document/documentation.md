@@ -88,9 +88,12 @@ development:
 
   Table: users
     id          INT PK AUTO_INCREMENT
-    name        VARCHAR(50) UNIQUE
+    name        VARCHAR(50) UNIQUE (case-insensitive)
     email       VARCHAR(254) UNIQUE (normalized Gmail address; NULL for legacy accounts)
     password    VARCHAR(255) (PBKDF2 hash for new accounts)
+    name_normalized / email_normalized
+                Generated lowercase columns with unique indexes, installed by UserDAO
+                to enforce case-insensitive uniqueness for concurrent registrations.
 
   Table: student_login_history (created automatically on first successful login)
     id          BIGINT PK AUTO_INCREMENT
